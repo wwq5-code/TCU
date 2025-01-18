@@ -41,17 +41,17 @@ On MNIST, USR = 1%
 
 In this table, we can achieve these metric values by running corresponding python files.
 
-1. To run the OUL on MNIST, we can run
+1. To run the TCU on MNIST, we can run
 ```
 python /Manifold_unl/On_MNIST/New_version/MNIST_Normal_distribution.py
 ```
 
-2. To run the OUL on CIFAR10, we can run
+2. To run the TCU on CIFAR10, we can run
 ```
 python /Manifold_unl/On_CIFAR10/New_version/CIFAR10_Normal_distribution.py
 ```
 
-3. To run the OUL on CelebA, we can run
+3. To run the TCU on CelebA, we can run
 ```
 python /Manifold_unl/On_CelebA/New_version/CELEBA_Normal_distribution_new.py
 ```
