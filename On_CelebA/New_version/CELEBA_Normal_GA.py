@@ -538,6 +538,34 @@ def add_trigger_new(add_backdoor, dataset, poison_samples_size, mode):
 
 
 
+class Decoder(nn.Module):
+    def __init__(self, input_size=128):
+        super(Decoder, self).__init__()
+        # Start with a linear layer to get the correct number of features
+        self.fc = nn.Linear(input_size, 512)
+
+        # Upscale to the desired dimensions using transposed convolutions
+        self.deconv1 = nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1) # Output: 256 x 2 x 2
+        self.deconv2 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1) # Output: 128 x 4 x 4
+        self.deconv3 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)  # Output: 64 x 8 x 8
+        self.deconv4 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)   # Output: 32 x 16 x 16
+
+        # Final layer to produce an output of 3 channels (CIFAR-10 image)
+        self.deconv5 = nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1)    # Output: 3 x 32 x 32
+
+        # Activation functions
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()  # Sigmoid for final layer to output values in [0, 1]
+
+    def forward(self, x):
+        x = self.relu(self.fc(x))
+        x = x.view(-1, 512, 1, 1)  # Reshape to start the transposed convolutions
+        x = self.relu(self.deconv1(x))
+        x = self.relu(self.deconv2(x))
+        x = self.relu(self.deconv3(x))
+        x = self.relu(self.deconv4(x))
+        x = self.sigmoid(self.deconv5(x))  # Use sigmoid if the image values are normalized between 0 and 1
+        return x
 
 
 class VIB(nn.Module):
@@ -547,7 +575,7 @@ class VIB(nn.Module):
         self.encoder = encoder
         self.approximator = approximator
         self.decoder = decoder
-        self.fc3 = nn.Linear(28 * 28, 28 * 28)  # output
+        self.fc3 = nn.Linear(3 * 32 * 32, 3 * 32 * 32)  # output
         self.fc_var = nn.Linear(args.dimZ, 1)  # for s-VAE
 
     def explain(self, x, mode='topk'):
@@ -585,19 +613,12 @@ class VIB(nn.Module):
             logits_y = self.approximator(logits_z)  # (B , 10)
             logits_y = logits_y.reshape((B, 10))  # (B,   10)
             return logits_z, logits_y, mu, logvar
-        elif mode == '64QAM_distribution':
-            logits_z, mu, logvar = self.explain(x, mode='distribution')  # (B, C, H, W), (B, C* h* w)
-            # print(logits_z)
-
-            logits_y = self.approximator(logits_z)  # (B , 10)
-            logits_y = logits_y.reshape((B, 10))  # (B,   10)
-            return logits_z, logits_y, mu, logvar
 
         elif mode == 'with_reconstruction':
             logits_z, mu, logvar = self.explain(x, mode='distribution')  # (B, C, H, W), (B, C* h* w)
             # print("logits_z, mu, logvar", logits_z, mu, logvar)
             logits_y = self.approximator(logits_z)  # (B , 10)
-            logits_y = logits_y.reshape((B, 10))  # (B,   10)
+            logits_y = logits_y.reshape((B, 2))  # (B,   10)
             x_hat = self.reconstruction(logits_z, x)
             return logits_z, logits_y, x_hat, mu, logvar
 
@@ -654,9 +675,10 @@ class VIB(nn.Module):
         B, dimZ = logits_z.shape
         logits_z = logits_z.reshape((B, -1))
         output_x = self.decoder(logits_z)
-        #x_v = x.view(x.size(0), -1)
-        #x2 = F.relu(x_v - output_x)
-        return torch.sigmoid(output_x)
+        x_v = x.view(x.size(0), -1)
+        output_x = output_x.view(output_x.size(0), -1)
+        x2 = F.relu(x_v - output_x)
+        return torch.sigmoid(self.fc3(x2))
 
     def cifar_recon(self, logits_z):
         # B, c, h, w = logits_z.shape
@@ -699,6 +721,12 @@ def init_vib(args):
         decoder = LinearModel(n_feature=args.dimZ, n_output=3 * 32 * 32)
         lr = args.lr
 
+    elif args.dataset == 'CelebA':
+        approximator = LinearModel(n_feature=args.dimZ, n_output=2)
+        encoder = resnet18(3, args.dimZ * 2)  # resnet18(1, 49*2)
+        decoder = Decoder(input_size=args.dimZ) #LinearModel(n_feature=args.dimZ, n_output=3 * 32 * 32)
+        lr = args.lr
+
     vib = VIB(encoder, approximator, decoder)
     vib.to(args.device)
     return vib, lr
@@ -718,7 +746,7 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
         # views_x: [B, k, 1, 28, 28]
         x = torch.stack(x, dim=1)  # ensure it's a tensor
         y = torch.stack(y, dim=1)  # ensure it's a tensor
-        x, y = x.to(args.device), y.to(args.device)  # (B, C, H, W), (B, 10)
+        x, y = x.to(args.device), y[:,:,20].to(args.device)  # (B, C, H, W), (B, 10)
 
         # Stack the k views along the batch dimension for encoding
         # views_batch is a list of length k, each element is [B, 1, 28, 28]
@@ -798,14 +826,14 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
                   + ', '.join([f'{k} {v:.3f}' for k, v in metrics.items()]))
             x_cpu = x.cpu().data
             x_cpu = x_cpu.clamp(0, 1)
-            x_cpu = x_cpu.view(x_cpu.size(0), 1, 28, 28)
+            x_cpu = x_cpu.view(x_cpu.size(0), 3, 32, 32)
             grid = torchvision.utils.make_grid(x_cpu, nrow=4)
             plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
             # plt.show()
 
             x_hat_cpu = x_hat.cpu().data
             x_hat_cpu = x_hat_cpu.clamp(0, 1)
-            x_hat_cpu = x_hat_cpu.view(x_hat_cpu.size(0), 1, 28, 28)
+            x_hat_cpu = x_hat_cpu.view(x_hat_cpu.size(0), 3, 32, 32)
             grid = torchvision.utils.make_grid(x_hat_cpu, nrow=4)
             plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
             # plt.show()
@@ -821,12 +849,15 @@ def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn,
     acc_test = []
     backdoor_acc_list = []
 
+    step = 0
+
     print(len(erasing_dataset.dataset))
-    for epoch in range(args.num_epochs+5):
+
+    for epoch in range(1):
         model.train()
         for (x_e, y_e), (x_r, y_r) in zip(erasing_dataset, dataloader_remaining_after_aux):
-            x_e, y_e = x_e.to(args.device), y_e.to(args.device)  # (B, C, H, W), (B, 10)
-            x_r, y_r = x_r.to(args.device), y_r.to(args.device)  # (B, C, H, W), (B, 10)
+            x_e, y_e = x_e.to(args.device), y_e[:,20].to(args.device)  # (B, C, H, W), (B, 10)
+            x_r, y_r = x_r.to(args.device), y_r[:,20].to(args.device)  # (B, C, H, W), (B, 10)
 
 
             if noise_flag =="noise":
@@ -880,9 +911,9 @@ def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn,
                 # print(updated_x)
             # if acc_back<0.1:
             #     break
-            backdoor_acc = eva_vib(model, erasing_dataset, args, name='on erased data', epoch=999)
-            if backdoor_acc < 0.15:
-                break
+            # backdoor_acc = eva_vib(model, erasing_dataset, args, name='on erased data', epoch=999)
+            # if backdoor_acc < 0.15:
+            #     break
     print("backdoor_acc_list", backdoor_acc_list)
     return model
 
@@ -1038,7 +1069,7 @@ def eva_vib(vib, dataloader_erase, args, name='test', epoch=999):
     num_total = 0
     num_correct = 0
     for batch_idx, (x, y) in enumerate(dataloader_erase):
-        x, y = x.to(args.device), y.to(args.device)  # (B, C, H, W), (B, 10)
+        x, y = x.to(args.device), y[:,20].to(args.device)  # (B, C, H, W), (B, 10)
         # x = x.view(x.size(0), -1)
         # print(x.shape)
         logits_z, logits_y, x_hat, mu, logvar = vib(x, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
@@ -1262,6 +1293,30 @@ class MultiViewCIFAR(Dataset):
         return views, labels
 
 
+class MultiViewCelebA(Dataset):
+    """
+    Provide k augmented views of CelebA images.
+    """
+
+    def __init__(self, base_dataset, k, base_transform, aug_transform):
+        self.base_dataset = base_dataset
+        self.k = k
+        self.base_transform = base_transform
+        self.aug_transform = aug_transform
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        img, attr = self.base_dataset[idx]
+
+        views = [self.aug_transform(img) for _ in range(self.k)]
+
+        # If your CelebA target_type='attr', 'attr' is a 40-dim vector.
+        # You may want a single label, or keep the attribute vector.
+        labels = [attr for _ in range(self.k)]
+        return views, labels
+
 class CustomLabelDataset(Dataset):
     def __init__(self, dataset, label):
         self.dataset = dataset
@@ -1278,7 +1333,8 @@ class CustomLabelDataset(Dataset):
 def get_membership_inf_model(original_train_set, test_set, vib, args):
     original_size = len(original_train_set)
     selected_trained_set, temp_remain = torch.utils.data.random_split(original_train_set, [5000, original_size - 5000])
-    selected_test_set, temp_remain = torch.utils.data.random_split(test_set, [5000, 5000])
+    test_size = len(test_set)
+    selected_test_set, temp_remain = torch.utils.data.random_split(test_set, [5000, test_size - 5000])
 
     # Wrap the datasets with custom labels
     labeled_trained_set = CustomLabelDataset(selected_trained_set, 1)
@@ -1397,7 +1453,9 @@ class UnlearningDatasetWithCentersAndPositives(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         # Get the original sample
         x, y = self.base_dataset[idx]
-
+        y = y[20]
+        # if len(y)>10:
+        #     y = y[:,20]
         # Ensure y is an integer (if it's already an int, this is a no-op)
         if isinstance(y, torch.Tensor):
             y = y.item()
@@ -1419,7 +1477,7 @@ def prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args
     with torch.no_grad():
         for step, (images, labels) in enumerate(remaining_loader):
             images = images.to(args.device)
-            labels = labels.to(args.device)
+            labels = labels[:,20].to(args.device)
             z, logits_y, x_hat, mu, logvar = vib(images, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
             z = F.normalize(z, p=2, dim=1)
             all_embeddings.append(z.cuda())
@@ -1516,20 +1574,20 @@ args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available
 args.iid = True
 # args.model = 'z_linear'
 args.model = 'Normal'
-args.num_epochs = 5
+args.num_epochs = 1
 args.unl_epochs = 1
 args.infer_t_epochs = 1
-args.dataset = 'MNIST'
+args.dataset = 'CelebA'
 args.add_noise = False
 args.beta = 0.0001
-args.mcr_rate = 0   # 0.0001
+args.mcr_rate = 0.001
 args.mse_rate = 0.1
-args.lr = 0.0005
-args.distance_rate = 0.0001
-args.margin = 0.001
+args.lr = 0.0001
+args.distance_rate = 0.01
+args.margin = 0.1
 args.unlearn_learning_rate = 0.1
 args.ep_distance = 20
-args.dimZ =  32 #10 /2  # 40 # 2
+args.dimZ =  64 #Normalize #10 /2  # 40 # 2
 args.batch_size = 16
 args.unlearning_size =100
 args.erased_local_r = 0.02
@@ -1558,8 +1616,8 @@ if args.dataset == 'MNIST':
         T.ToTensor()
         # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-
     trans_mnist = transforms.Compose([transforms.ToTensor(), ])
+
     # Base transforms (convert to tensor and normalize)
     base_transform = transforms.Compose([
         transforms.ToTensor(),
@@ -1574,7 +1632,7 @@ if args.dataset == 'MNIST':
     ])
     train_set = MNIST('../data/mnist', train=True, transform=None, download=True)
     test_set = MNIST('../data/mnist', train=False, transform=base_transform, download=True)
-    multi_view_dataset = MultiViewMNIST(train_set, args.k, base_transform, base_transform)
+    multi_view_dataset = MultiViewMNIST(train_set, args.k, base_transform, augmentation_transform)
     original_train_set = MNIST('../data/mnist', train=True, transform=base_transform, download=True)
 
 elif args.dataset == 'CIFAR10':
@@ -1582,23 +1640,35 @@ elif args.dataset == 'CIFAR10':
         T.ToTensor(),
     ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608)),                                 T.RandomHorizontalFlip(),
     # Transforms
-
+    base_transform = T.Compose([
+        T.ToTensor(),
+        T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608)),
+    ])
+    aug_transform = T.Compose([
+        T.RandomCrop(32, padding=4),
+        T.RandomHorizontalFlip(),
+        T.ToTensor(),
+        T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608)),
+    ])
     test_transform = T.Compose([T.ToTensor(), ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608))
-    train_set = CIFAR10('../data/cifar', train=True, transform=None, download=True)
-    test_set = CIFAR10('../data/cifar', train=False, transform=train_transform, download=True)
-    multi_view_dataset = MultiViewCIFAR(train_set, args.k, train_transform, train_transform)
-    original_train_set = CIFAR10('../data/cifar', train=True, transform=train_transform, download=True)
+    train_set = CIFAR10('../data/cifar', train=True, transform=None, download=False)
+    test_set = CIFAR10('../data/cifar', train=False, transform=base_transform, download=False)
+    multi_view_dataset = MultiViewCIFAR(train_set, args.k, base_transform, aug_transform)
+    original_train_set = CIFAR10('../data/cifar', train=True, transform=base_transform, download=False)
 
 elif args.dataset == 'CelebA':
     train_transform = T.Compose([T.Resize((32, 32)),
                                  T.ToTensor(),
                                  ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608)),                                 T.RandomHorizontalFlip(),
-    test_transform = T.Compose([T.ToTensor(),
-                                ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608))
+
     #/kaggle/input/celeba/
     data_path = '../data/CelebA'
-    train_set = CelebA(data_path, split='train', target_type = 'attr', transform=train_transform, download=False)
+    train_set = CelebA(data_path, split='train', target_type = 'attr', transform=None, download=False)
     test_set = CelebA(data_path, split='test', target_type = 'attr', transform=train_transform, download=False)
+    multi_view_dataset = MultiViewCelebA(train_set, args.k, train_transform, train_transform)
+    original_train_set = CelebA(data_path, split='train', transform=train_transform, download=False)
+
+
 
 
 
@@ -1618,8 +1688,6 @@ remaining_indices = list(set(all_indices) - set(unlearning_indices))
 # Create Subset datasets
 unlearning_dataset = Subset(original_train_set, unlearning_indices)
 remaining_dataset = Subset(original_train_set, remaining_indices)
-
-
 
 # Create new DataLoaders
 unlearning_loader = DataLoader(unlearning_dataset, batch_size=args.batch_size, shuffle=True)
@@ -1693,13 +1761,43 @@ infer_acc = membership_inf_results(infer_model, vib, unl_infer_data_loader, "bef
 
 # unlearning
 
-unlearning_loader_with_c_p = prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args)
+# unlearning_loader_with_c_p = prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args)
+
+optimizer = torch.optim.Adam(vib.parameters(), lr=args.lr)
+
 
 # record time for unlearning
 start_time = time.time()
 
-vib_unlearnined = triplet_contrastive_unlearning(vib, unlearning_loader_with_c_p, args.margin, args.unl_epochs, args)
+epochs = 1
+for epoch in range(epochs):
+    vib.train()  # Switch to training mode
 
+    for images, labels in unlearning_loader:
+        images, labels = images.to(device), labels[:,20].to(device)
+
+        z_unlearn, logits_y, x_hat, mu, logvar = vib(images, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
+        # VAE two loss: KLD + MSE
+
+        KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar).cuda()
+        KLD_mean = torch.mean(KLD_element).mul_(-0.5).cuda()
+
+        images = images.view(images.size(0), -1)
+        BCE = reconstruction_function(x_hat, images)
+        z_unlearn = F.normalize(z_unlearn, p=2, dim=1)
+
+
+        H_p_q = loss_fn(logits_y, labels)
+
+        loss = args.beta * KLD_mean -BCE * 0.001  - H_p_q * 0.001
+
+
+        # Backpropagation and optimization
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    print(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item()}")
 
 print("Unlearning completed.")
 
@@ -1709,32 +1807,16 @@ print(f'unlearning with dp {running_time} seconds')
 
 
 # calculate berfore unlearning
-infer_acc = membership_inf_results(infer_model, vib_unlearnined, unl_infer_data_loader, "after unl")
+infer_acc = membership_inf_results(infer_model, vib, unl_infer_data_loader, "after unl")
 
 
 vib.eval()
-acc_t = eva_vib(vib_unlearnined, test_loader, args, name='on test dataset after unlearning', epoch=999)
-acc_r = eva_vib(vib_unlearnined, original_train_loader, args, name='on the remaining training after unlearning', epoch=999)
-acc_ua = eva_vib(vib_unlearnined, unlearning_loader, args, name='on the unlearning data after unlearning', epoch=999)
+acc_t = eva_vib(vib, test_loader, args, name='on test dataset after unlearning', epoch=999)
+acc_r = eva_vib(vib, original_train_loader, args, name='on the remaining training after unlearning', epoch=999)
+acc_ua = eva_vib(vib, unlearning_loader, args, name='on the unlearning data after unlearning', epoch=999)
 print("acc_ua:", 1 - acc_ua)
 
 
 
 
-
-
-# for retraining
-
-# Create Subset datasets
-unlearning_dataset = Subset(train_set, unlearning_indices)
-remaining_dataset = Subset(train_set, remaining_indices)
-
-unlearning_dataset = TransformSubset(train_set, unlearning_indices, transform=trans_mnist)
-
-labeled_unlearn_set = CustomLabelDataset(unlearning_dataset, 0)  # we set label to 0 as the unlearned should not in the training set
-
-
-
-unl_infer_data_loader = DataLoader(labeled_unlearn_set, batch_size=args.batch_size, shuffle=True)
-# calculate after unlearning
 

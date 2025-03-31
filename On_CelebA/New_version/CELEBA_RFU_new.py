@@ -848,7 +848,7 @@ def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn,
 
     acc_test = []
     backdoor_acc_list = []
-
+    step = 0
     print(len(erasing_dataset.dataset))
 
     for epoch in range(1):
@@ -873,8 +873,8 @@ def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn,
             KLD_element2 = mu_r.pow(2).add_(logvar_r.exp()).mul_(-1).add_(1).add_(logvar_r).to(args.device)
             KLD_mean2 = torch.mean(KLD_element2).mul_(-0.5).to(args.device)
 
-            loss = args.beta * KLD_mean - H_p_q
-            # loss = args.unlearn_learning_rate * (args.beta * KLD_mean - H_p_q) + args.self_sharing_rate * (args.beta * KLD_mean2 + H_p_q2)  # args.beta * KLD_mean - H_p_q + args.beta * KLD_mean2  + H_p_q2 #- log_z / e_log_py #-   # H_p_q + args.beta * KLD_mean2
+            #loss = args.beta * KLD_mean - H_p_q
+            loss = args.unlearn_learning_rate * (args.beta * KLD_mean - H_p_q) + args.self_sharing_rate * (args.beta * KLD_mean2 + H_p_q2)  # args.beta * KLD_mean - H_p_q + args.beta * KLD_mean2  + H_p_q2 #- log_z / e_log_py #-   # H_p_q + args.beta * KLD_mean2
 
             optimizer.zero_grad()
             loss.backward()

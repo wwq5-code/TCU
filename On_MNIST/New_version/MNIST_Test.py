@@ -481,7 +481,9 @@ def resnet34(in_channels, num_classes):
     return ResNet(in_channels, block_features, num_classes)
 
 
-def add_trigger_new(add_backdoor, dataset, poison_samples_size, mode):
+
+
+def add_trigger_new(dataset,target_label, backdoor_label, poison_samples_size, mode):
     print("## generate——test" + mode + "Bad Imgs")
 
     # indices = dataset.indices
@@ -495,49 +497,56 @@ def add_trigger_new(add_backdoor, dataset, poison_samples_size, mode):
     # total_poison_num = int(len(new_data) * portion/10)
     _, width, height = x.shape
 
+    data_list = []
+    labels_list = []
     for i in range(len(list_from_dataset_tuple)):
-        if add_backdoor == 1:
 
-            x, y = list_from_dataset_tuple[i]
-            # image_steg = generate_gray_laplace_small_trigger_noise(new_data[i])
-            # new_data[i] = image_steg
+        x, y = list_from_dataset_tuple[i]
+        if y != target_label:
+            continue
 
-            # Plotting
-            # plt.imshow(embedded_image)
-            # plt.title("Image with Embedded Feature Map")
-            # plt.axis('off')
-            # plt.show()
+        # add trigger as general backdoor
+        # x[:, width - 3, height - 3] = 1
+        # x[:, width - 3, height - 4] = 1
+        # x[:, width - 4, height - 3] = 1
+        # x[:, width - 4, height - 4] = 1
+        x[x<=0.1] = 0.1
+        # Store the (possibly) modified image/label in our new lists
+        data_list.append(x)
+        labels_list.append(backdoor_label)
 
-            # add trigger as general backdoor
-            x[:, width - 3, height - 3] = args.laplace_scale
-            x[:, width - 3, height - 4] = args.laplace_scale
-            x[:, width - 4, height - 3] = args.laplace_scale
-            x[:, width - 4, height - 4] = args.laplace_scale
-
-            list_from_dataset_tuple[i] = x, 7
-            list_from_dataset_tuple_target[i] = x, y
-            # new_data[i, :, width - 23, height - 21] = 254
-            # new_data[i, :, width - 23, height - 22] = 254
-            # new_data[i, :, width - 22, height - 21] = 254
-            # new_data[i, :, width - 24, height - 21] = 254
-            # new_data[i] = torch.from_numpy(embedded_image).view([1,28,28])
-            #      new_data_re.append(embedded_image)
-            poison_samples_size = poison_samples_size - 1
-            if poison_samples_size <= 0:
-                break
-        # x=torch.tensor(new_data[i])
-        # x_cpu = x.cpu().data
-        # x_cpu = x_cpu.clamp(0, 1)
-        # x_cpu = x_cpu.view(1, 1, 28, 28)
-        # grid = torchvision.utils.make_grid(x_cpu, nrow=1, cmap="gray")
-        # plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
-        # plt.show()
+        poison_samples_size = poison_samples_size - 1
+        if poison_samples_size <= 0: # we show the last image
+            x_cpu = x.cpu().data
+            x_cpu = x_cpu.clamp(0, 1)
+            x_cpu = x_cpu.view(1, 1, 28, 28)
+            grid = torchvision.utils.make_grid(x_cpu, nrow=1)
+            plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
+            plt.show()
+            break
 
     # print(len(new_data_re))
-    return Subset(list_from_dataset_tuple, indices), Subset(list_from_dataset_tuple_target, indices)
+    # Stack them into tensors
+    data_tensor = torch.stack(data_list)
+    label_tensor = torch.tensor(labels_list, dtype=torch.long)
+
+    # Create a new dataset with these backdoored samples
+    backdoored_dataset = TensorDataset(data_tensor, label_tensor)
+    return backdoored_dataset
 
 
 
+class TensorLabelsWrapper(Dataset):
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __getitem__(self, idx):
+        x, y = self.dataset[idx]
+        # Convert y (int) to a torch tensor
+        return x, torch.tensor(y, dtype=torch.long)
+
+    def __len__(self):
+        return len(self.dataset)
 
 
 class VIB(nn.Module):
@@ -680,10 +689,7 @@ def init_vib(args):
     if args.dataset == 'MNIST':
         approximator = LinearModel(n_feature=args.dimZ )
         decoder = LinearModel(n_feature=args.dimZ , n_output=28 * 28)
-        if args.model == 'S-VAE':
-            encoder = resnet18(1, args.dimZ)  # 64QAM needs 6 bits
-        else:
-            encoder = resnet18(1, args.dimZ*2)  # 64QAM needs 6 bits
+        encoder = LinearModel(n_feature=28 * 28 , n_output= args.dimZ*2)
         lr = args.lr
 
     elif args.dataset == 'CIFAR10':
@@ -716,8 +722,8 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
 
     for step, (x, y) in enumerate(dataset):
         # views_x: [B, k, 1, 28, 28]
-        x = torch.stack(x, dim=1)  # ensure it's a tensor
-        y = torch.stack(y, dim=1)  # ensure it's a tensor
+        # x = torch.stack(x, dim=1)  # ensure it's a tensor
+        # y = torch.stack(y, dim=1)  # ensure it's a tensor
         x, y = x.to(args.device), y.to(args.device)  # (B, C, H, W), (B, 10)
 
         # Stack the k views along the batch dimension for encoding
@@ -727,10 +733,10 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
         # Let's rearrange to handle all at once.
         # shape: B x k x C x H x W -> (B*k, C, H, W)
 
-        B, k, C_in, H, W = x.shape
+        B,   C_in, H, W = x.shape
 
-        x = x.view(B * k, C_in, H, W)
-        y = y.view(B * k)
+        x = x.view(B  , -1) # C_in, H, W)
+        y = y.view(B  )
 
         logits_z, logits_y, x_hat, mu, logvar = model(x, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
         # VAE two loss: KLD + MSE
@@ -747,27 +753,9 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
         BCE = reconstruction_function(x_hat, x)
         # Calculate the L2-norm
 
-        # Normalize each embedding
-        z = F.normalize(logits_z, p=2, dim=1)  # [B*k, d]
 
-        # Reshape back to [B, k, d]
-        z = z.view(B, k, args.dimZ)
 
-        # Compute centroids: mean over k
-        centroids = z.mean(dim=1)  # [B, d]
-
-        # We want C = [d x B], so transpose:
-        C = centroids.transpose(0,1)  # [d, B]
-
-        # Compute nuclear norm of C
-        # In newer PyTorch, we can use torch.linalg.svd
-        # S: singular values
-        U, S, V = torch.svd(C)  # or torch.linalg.svd(C), depending on PyTorch version
-        nuclear_norm = S.sum()
-
-        # nuclear_norm = maximum_manifold_capacity(logits_z, gamma=0)
-
-        loss = args.beta * KLD_mean + BCE + H_p_q - args.mcr_rate * nuclear_norm #  + H_p_q + H_p_q - nuclear_norm  + H_p_q + H_p_q + nuclear_norm
+        loss = args.beta * KLD_mean  + H_p_q  #  + BCE + H_p_q + H_p_q - nuclear_norm  + H_p_q + H_p_q + nuclear_norm
 
         optimizer.zero_grad()
         loss.backward()
@@ -814,77 +802,7 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
 
     return model
 
-# here we prepare the unlearned model, and we can calculate the model difference
-def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn, args, noise_flag):
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    acc_test = []
-    backdoor_acc_list = []
-
-    print(len(erasing_dataset.dataset))
-    for epoch in range(args.num_epochs+5):
-        model.train()
-        for (x_e, y_e), (x_r, y_r) in zip(erasing_dataset, dataloader_remaining_after_aux):
-            x_e, y_e = x_e.to(args.device), y_e.to(args.device)  # (B, C, H, W), (B, 10)
-            x_r, y_r = x_r.to(args.device), y_r.to(args.device)  # (B, C, H, W), (B, 10)
-
-
-            if noise_flag =="noise":
-                x_e = add_laplace_noise(x_e, epsilon=args.laplace_epsilon, sensitivity=1, args=args)
-            logits_z_e, logits_y_e, x_hat_e, mu_e, logvar_e = model(x_e, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
-
-            logits_z_r, logits_y_r, x_hat_r, mu_r, logvar_r = model(x_r, mode='with_reconstruction')
-
-            KLD_element = mu_e.pow(2).add_(logvar_e.exp()).mul_(-1).add_(1).add_(logvar_e).cuda()
-            KLD_mean = torch.mean(KLD_element).mul_(-0.5).cuda()
-            H_p_q = loss_fn(logits_y_e, y_e)
-            #loss = args.beta * KLD_mean - args.unlearn_learning_rate * H_p_q
-
-            H_p_q2 = loss_fn(logits_y_r, y_r)
-            KLD_element2 = mu_r.pow(2).add_(logvar_r.exp()).mul_(-1).add_(1).add_(logvar_r).to(args.device)
-            KLD_mean2 = torch.mean(KLD_element2).mul_(-0.5).to(args.device)
-
-            loss = args.unlearn_learning_rate * (args.beta * KLD_mean - H_p_q) + args.self_sharing_rate * (
-                        args.beta * KLD_mean2 + H_p_q2)  # args.beta * KLD_mean - H_p_q + args.beta * KLD_mean2  + H_p_q2 #- log_z / e_log_py #-   # H_p_q + args.beta * KLD_mean2
-
-            optimizer.zero_grad()
-            loss.backward()
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), 5, norm_type=2.0, error_if_nonfinite=False)
-            optimizer.step()
-            acc_back = (logits_y_e.argmax(dim=1) == y_e).float().mean().item()
-            # backdoor_acc_list.append(acc_r)
-            metrics = {
-                'acc_back': acc_back,
-                'loss1': loss.item(),
-                'KLD_mean': KLD_mean.item(),
-                # '1-JS(p,q)': JS_p_q,
-                'mu': torch.mean(mu_e).item(),
-                # 'KLD': KLD.item(),
-                # 'KLD_mean': KLD_mean.item(),
-            }
-            # if epoch == args.num_epochs - 1:
-            #     mu_list.append(torch.mean(mu).item())
-            #     sigma_list.append(sigma)
-            if step % len(erasing_dataset) % 10000 == 0:
-                print(f'[{epoch}/{0 + args.num_epochs}:{step % len(erasing_dataset):3d}] '
-                      + ', '.join([f'{k} {v:.3f}' for k, v in metrics.items()]))
-                x_cpu = x_e.cpu().data
-                x_cpu = x_cpu.clamp(0, 1)
-                x_cpu = x_cpu.view(x_cpu.size(0), 1, 28, 28)
-                grid = torchvision.utils.make_grid(x_cpu, nrow=4)
-                # plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
-                # plt.show()
-
-                print(acc_back)
-                print("print x grad")
-                # print(updated_x)
-            # if acc_back<0.1:
-            #     break
-            backdoor_acc = eva_vib(model, erasing_dataset, args, name='on erased data', epoch=999)
-            if backdoor_acc < 0.15:
-                break
-    print("backdoor_acc_list", backdoor_acc_list)
-    return model
 
 def prepare_update_direction(unlearned_vib, model):
     update_deltas_direction = []
@@ -1031,30 +949,41 @@ def construct_input(dataset, dataloader_target_only_label_modified, target_vib, 
 
 
 @torch.no_grad()
-def eva_vib(vib, dataloader_erase, args, name='test', epoch=999):
-    # first, generate x_hat from trained vae
+def eva_vib(vib, dataloader, args, name='test', epoch=999):
     vib.eval()
 
     num_total = 0
     num_correct = 0
-    for batch_idx, (x, y) in enumerate(dataloader_erase):
-        x, y = x.to(args.device), y.to(args.device)  # (B, C, H, W), (B, 10)
-        # x = x.view(x.size(0), -1)
-        # print(x.shape)
-        logits_z, logits_y, x_hat, mu, logvar = vib(x, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
 
-        x_hat = x_hat.view(x_hat.size(0), -1)
+    # 用来存放 (confidence, x, y, global_index) 等信息
+    # 如果只想存 x, y 的 index（在整个数据集里），
+    # 你需要在 Dataset 中额外返回一个 idx，或者自己记 batch_idx, sample_idx
+    confidence_list = []
 
-        if y.ndim == 2:
+    global_idx = 0  # 累计样本索引
+
+    for batch_idx, (x, y) in enumerate(dataloader):
+        x, y = x.to(args.device), y.to(args.device)
+
+        # 根据模型结构不同，可能需要 reshape
+        x = x.view(x.size(0), -1)
+
+        # 前向计算
+        logits_z, logits_y, x_hat, mu, logvar = vib(x, mode='with_reconstruction')
+        if y.ndim == 2:  # 如果 y 是 one-hot
             y = y.argmax(dim=1)
-        num_correct += (logits_y.argmax(dim=1) == y).sum().item()
+
+        # 计算分类准确率
+        preds = logits_y.argmax(dim=1)
+        num_correct += (preds == y).sum().item()
         num_total += len(x)
 
-    acc = num_correct / num_total
-    acc = round(acc, 5)
-    print(f'epoch {epoch}, {name} accuracy:  {acc:.4f}, total_num:{num_total}', x.shape)
-    return acc
 
+    # 计算准确率
+    acc = round(num_correct / num_total, 5)
+    print(f'epoch {epoch}, {name} accuracy:  {acc:.4f}, total_num: {num_total}')
+
+    return acc
 
 @torch.no_grad()
 def eva_S_VIB(vib, dataloader_erase, args, name='test', epoch=999):
@@ -1308,6 +1237,7 @@ def get_membership_inf_model(original_train_set, test_set, vib, args):
             x, y = x.to(device), y.to(device).float()  # Ensure y is of type float for BCEWithLogitsLoss
             optimizer_infer.zero_grad()
 
+            x = x.view(x.size(0), -1)
             logits_z, logits_y, x_hat, mu, logvar = vib(x, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
             y_pred = infer_model(logits_z.detach()).squeeze()  # Get predictions and squeeze to match y shape
 
@@ -1572,10 +1502,10 @@ if args.dataset == 'MNIST':
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
     ])
-    train_set = MNIST('../data/mnist', train=True, transform=None, download=True)
+    train_set = MNIST('../data/mnist', train=True, transform=base_transform, download=True)
     test_set = MNIST('../data/mnist', train=False, transform=base_transform, download=True)
-    multi_view_dataset = MultiViewMNIST(train_set, args.k, base_transform, base_transform)
-    original_train_set = MNIST('../data/mnist', train=True, transform=base_transform, download=True)
+    # multi_view_dataset = MultiViewMNIST(train_set, args.k, base_transform, base_transform)
+    # original_train_set = MNIST('../data/mnist', train=True, transform=base_transform, download=True)
 
 elif args.dataset == 'CIFAR10':
     train_transform = T.Compose([  # T.RandomCrop(32, padding=4),
@@ -1602,12 +1532,29 @@ elif args.dataset == 'CelebA':
 
 
 
-train_loader = DataLoader(multi_view_dataset, batch_size=args.batch_size, shuffle=True)
-original_train_loader = DataLoader(original_train_set, batch_size=args.batch_size, shuffle=False)
+train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+
+
+backdoored_set = add_trigger_new(train_set,target_label=2, backdoor_label=2, poison_samples_size=600, mode="backdoor")
+backdoored_loader = DataLoader(backdoored_set, batch_size=args.batch_size, shuffle=True)
+
+train_set_wrapped = TensorLabelsWrapper(train_set)
+# merged_dataset = ConcatDataset([train_set_wrapped, backdoored_set])
+
+
+backdoored_set_of_1 = add_trigger_new(train_set,target_label=1, backdoor_label=1, poison_samples_size=600, mode="backdoor")
+backdoored_loader_of1 = DataLoader(backdoored_set_of_1, batch_size=args.batch_size, shuffle=True)
+
+# new
+merged_dataset = ConcatDataset([train_set_wrapped, backdoored_set, backdoored_set_of_1])
+backdoored_train_loader = DataLoader(merged_dataset, batch_size=args.batch_size, shuffle=True)
+
+
+original_train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=False)
 test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=True )
 
 # Extract all indices from the original dataset
-all_indices = list(range(len(original_train_set)))
+all_indices = list(range(len(train_set)))
 
 # Randomly select indices for the unlearning dataset
 unlearning_indices = random.sample(all_indices, args.unlearning_size)
@@ -1616,19 +1563,12 @@ unlearning_indices = random.sample(all_indices, args.unlearning_size)
 remaining_indices = list(set(all_indices) - set(unlearning_indices))
 
 # Create Subset datasets
-unlearning_dataset = Subset(original_train_set, unlearning_indices)
-remaining_dataset = Subset(original_train_set, remaining_indices)
 
 
 
-# Create new DataLoaders
-unlearning_loader = DataLoader(unlearning_dataset, batch_size=args.batch_size, shuffle=True)
-remaining_loader = DataLoader(remaining_dataset, batch_size=args.batch_size, shuffle=True)
-
-
-full_size = len(multi_view_dataset)
-original_size = len(original_train_set)
-print("full size", full_size, "original_size", original_size)
+full_size = len(train_set)
+merged_size = len(merged_dataset)
+print("full size", full_size, "original_size", merged_size)
 
 
 
@@ -1658,7 +1598,7 @@ train_type = args.train_type
 start_time = time.time()
 for epoch in range(args.num_epochs):
     vib.train()
-    vib = vib_train(train_loader, vib, loss_fn, reconstruction_function, args, epoch, train_type)  # dataloader_total, dataloader_w_o_twin
+    vib = vib_train(backdoored_train_loader, vib, loss_fn, reconstruction_function, args, epoch, train_type)  # dataloader_total, dataloader_w_o_twin
 
 
 print('acc list', clean_acc_list)
@@ -1669,72 +1609,73 @@ print(f'VIB Training took {running_time} seconds')
 
 # train infer model
 
-infer_model = get_membership_inf_model(original_train_set, test_set, vib, args)
+# infer_model = get_membership_inf_model(original_train_set, test_set, vib, args)
 
 ########
 
 vib.eval()
-acc_t = eva_vib(vib, test_loader, args, name='on test dataset before unlearning', epoch=999)
-acc_r = eva_vib(vib, original_train_loader, args, name='on the remaining training before unlearning', epoch=999)
+acc_t   = eva_vib(vib, test_loader, args, name='on test dataset before unlearning', epoch=999)
+acc_r  = eva_vib(vib, original_train_loader, args, name='on the remaining training before unlearning', epoch=999)
+
+acc_r  = eva_vib(vib, backdoored_loader, args, name='on the backdoored_loader', epoch=999)
+
+acc_r  = eva_vib(vib, backdoored_set_of_1, args, name='on the backdoored_set_of_1', epoch=999)
 
 
 
-acc_ua = eva_vib(vib, unlearning_loader, args, name='on the unlearning data before unlearning', epoch=999)
-print("acc_ua:", 1 - acc_ua)
-
-labeled_unlearn_set = CustomLabelDataset(unlearning_dataset, 0)  # we set label to 0 as the unlearned should not in the training set
-
-unl_infer_data_loader = DataLoader(labeled_unlearn_set, batch_size=args.batch_size, shuffle=True)
-# calculate after unlearning
-infer_acc = membership_inf_results(infer_model, vib, unl_infer_data_loader, "before unl")
+#acc_ua = eva_vib(vib, unlearning_loader, args, name='on the unlearning data before unlearning', epoch=999)
 
 
 
 
-# unlearning
 
-unlearning_loader_with_c_p = prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args)
+##  new for retrain
 
-# record time for unlearning
+
+vib_r, lr = init_vib(args)
+vib_r.to(args.device)
+
+loss_fn = nn.CrossEntropyLoss()
+
+reconstruction_function = nn.MSELoss(size_average=True)
+
+acc_test = []
+print("learning")
+
+print('Training vib_r')
+print(f'{type(vib_r.encoder).__name__:>10} encoder params:\t{num_params(vib_r.encoder) / 1000:.2f} K')
+print(f'{type(vib_r.approximator).__name__:>10} approximator params:\t{num_params(vib_r.approximator) / 1000:.2f} K')
+print(f'{type(vib_r.decoder).__name__:>10} decoder params:\t{num_params(vib_r.decoder) / 1000:.2f} K')
+# inspect_explanations()
+
+# train VIB
+clean_acc_list = []
+mse_list = []
+
+train_type = args.train_type
+
+# we first train the model with the erasing data, and then we will unlearn it
 start_time = time.time()
+for epoch in range(args.num_epochs):
+    vib_r.train()
+    vib_r = vib_train(backdoored_train_loader, vib_r, loss_fn, reconstruction_function, args, epoch, train_type)  # dataloader_total, dataloader_w_o_twin
 
-vib_unlearnined = triplet_contrastive_unlearning(vib, unlearning_loader_with_c_p, args.margin, args.unl_epochs, args)
 
-
-print("Unlearning completed.")
-
+print('acc list', clean_acc_list)
+print('mse list', mse_list)
 end_time = time.time()
 running_time = end_time - start_time
-print(f'unlearning with dp {running_time} seconds')
+print(f'VIB Training took {running_time} seconds')
+
+# train infer model
+
+# infer_model = get_membership_inf_model(original_train_set, test_set, vib_r, args)
+
+########
+
+vib_r.eval()
+acc_t   = eva_vib(vib_r, test_loader, args, name='on test dataset before unlearning', epoch=999)
+acc_t   = eva_vib(vib_r, original_train_loader, args, name='on the remaining training before unlearning', epoch=999)
 
 
-# calculate berfore unlearning
-infer_acc = membership_inf_results(infer_model, vib_unlearnined, unl_infer_data_loader, "after unl")
-
-
-vib.eval()
-acc_t = eva_vib(vib_unlearnined, test_loader, args, name='on test dataset after unlearning', epoch=999)
-acc_r = eva_vib(vib_unlearnined, original_train_loader, args, name='on the remaining training after unlearning', epoch=999)
-acc_ua = eva_vib(vib_unlearnined, unlearning_loader, args, name='on the unlearning data after unlearning', epoch=999)
-print("acc_ua:", 1 - acc_ua)
-
-
-
-
-
-
-# for retraining
-
-# Create Subset datasets
-unlearning_dataset = Subset(train_set, unlearning_indices)
-remaining_dataset = Subset(train_set, remaining_indices)
-
-unlearning_dataset = TransformSubset(train_set, unlearning_indices, transform=trans_mnist)
-
-labeled_unlearn_set = CustomLabelDataset(unlearning_dataset, 0)  # we set label to 0 as the unlearned should not in the training set
-
-
-
-unl_infer_data_loader = DataLoader(labeled_unlearn_set, batch_size=args.batch_size, shuffle=True)
-# calculate after unlearning
 

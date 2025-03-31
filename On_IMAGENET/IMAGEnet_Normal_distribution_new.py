@@ -35,7 +35,7 @@ import torchmetrics
 from torchmetrics.classification import BinaryAUROC, Accuracy
 
 from torch.nn.functional import pairwise_distance
-
+from collections import defaultdict
 
 
 def args_parser():
@@ -538,6 +538,34 @@ def add_trigger_new(add_backdoor, dataset, poison_samples_size, mode):
 
 
 
+class Decoder(nn.Module):
+    def __init__(self):
+        super(Decoder, self).__init__()
+        # Start with a linear layer to get the correct number of features
+        self.fc = nn.Linear(128, 512)
+
+        # Upscale to the desired dimensions using transposed convolutions
+        self.deconv1 = nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1) # Output: 256 x 2 x 2
+        self.deconv2 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1) # Output: 128 x 4 x 4
+        self.deconv3 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)  # Output: 64 x 8 x 8
+        self.deconv4 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)   # Output: 32 x 16 x 16
+
+        # Final layer to produce an output of 3 channels (CIFAR-10 image)
+        self.deconv5 = nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1)    # Output: 3 x 32 x 32
+
+        # Activation functions
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()  # Sigmoid for final layer to output values in [0, 1]
+
+    def forward(self, x):
+        x = self.relu(self.fc(x))
+        x = x.view(-1, 512, 1, 1)  # Reshape to start the transposed convolutions
+        x = self.relu(self.deconv1(x))
+        x = self.relu(self.deconv2(x))
+        x = self.relu(self.deconv3(x))
+        x = self.relu(self.deconv4(x))
+        x = self.sigmoid(self.deconv5(x))  # Use sigmoid if the image values are normalized between 0 and 1
+        return x
 
 
 class VIB(nn.Module):
@@ -547,7 +575,7 @@ class VIB(nn.Module):
         self.encoder = encoder
         self.approximator = approximator
         self.decoder = decoder
-        self.fc3 = nn.Linear(28 * 28, 28 * 28)  # output
+        # self.fc3 = nn.Linear(3 * 224 * 224, 3 * 224 * 224)  # output
         self.fc_var = nn.Linear(args.dimZ, 1)  # for s-VAE
 
     def explain(self, x, mode='topk'):
@@ -583,21 +611,14 @@ class VIB(nn.Module):
         if mode == 'distribution':
             logits_z, mu, logvar = self.explain(x, mode='distribution')  # (B, C, H, W), (B, C* h* w)
             logits_y = self.approximator(logits_z)  # (B , 10)
-            logits_y = logits_y.reshape((B, 10))  # (B,   10)
-            return logits_z, logits_y, mu, logvar
-        elif mode == '64QAM_distribution':
-            logits_z, mu, logvar = self.explain(x, mode='distribution')  # (B, C, H, W), (B, C* h* w)
-            # print(logits_z)
-
-            logits_y = self.approximator(logits_z)  # (B , 10)
-            logits_y = logits_y.reshape((B, 10))  # (B,   10)
+            logits_y = logits_y.reshape((B, 100))  # (B,   10)
             return logits_z, logits_y, mu, logvar
 
         elif mode == 'with_reconstruction':
             logits_z, mu, logvar = self.explain(x, mode='distribution')  # (B, C, H, W), (B, C* h* w)
             # print("logits_z, mu, logvar", logits_z, mu, logvar)
             logits_y = self.approximator(logits_z)  # (B , 10)
-            logits_y = logits_y.reshape((B, 10))  # (B,   10)
+            logits_y = logits_y.reshape((B, 100))  # (B,   10)
             x_hat = self.reconstruction(logits_z, x)
             return logits_z, logits_y, x_hat, mu, logvar
 
@@ -606,7 +627,6 @@ class VIB(nn.Module):
             # VAE is not related to labels
             # print("logits_z, mu, logvar", logits_z, mu, logvar)
             # logits_y = self.approximator(logits_z)  # (B , 10)
-            # logits_y = logits_y.reshape((B, 10))  # (B,   10)
             x_hat = self.reconstruction(logits_z, x)
             KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar).cuda()
             KLD = torch.sum(KLD_element).mul_(-0.5).cuda()
@@ -642,7 +662,7 @@ class VIB(nn.Module):
             KLD_mean = torch.distributions.kl.kl_divergence(q_z, p_z).mean().cuda()
 
             logits_y = self.approximator(z)  # (B , 10)
-            logits_y = logits_y.reshape((B, 10))  # (B,   10)
+            logits_y = logits_y.reshape((B, 100))  # (B,   10)
             return logits_y, z, x_hat, z_mean, z_var, KLD_mean
 
         elif mode == 'test':
@@ -699,6 +719,18 @@ def init_vib(args):
         decoder = LinearModel(n_feature=args.dimZ, n_output=3 * 32 * 32)
         lr = args.lr
 
+    elif args.dataset == 'miniIMAGENET':
+        approximator = LinearModel(n_feature=args.dimZ, n_output=100)
+        encoder = resnet18(3, args.dimZ * 2)  # resnet18(1, 49*2)
+        decoder = LinearModel(n_feature=args.dimZ, n_output=100)
+        lr = args.lr
+
+    elif args.dataset == 'CelebA':
+        approximator = LinearModel(n_feature=args.dimZ, n_output=2)
+        encoder = resnet18(3, args.dimZ * 2)  # resnet18(1, 49*2)
+        decoder = Decoder() #LinearModel(n_feature=args.dimZ, n_output=3 * 32 * 32)
+        lr = args.lr
+
     vib = VIB(encoder, approximator, decoder)
     vib.to(args.device)
     return vib, lr
@@ -716,8 +748,8 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
 
     for step, (x, y) in enumerate(dataset):
         # views_x: [B, k, 1, 28, 28]
-        x = torch.stack(x, dim=1)  # ensure it's a tensor
-        y = torch.stack(y, dim=1)  # ensure it's a tensor
+        # x = torch.stack(x, dim=1)  # ensure it's a tensor
+        # y = torch.stack(y, dim=1)  # ensure it's a tensor
         x, y = x.to(args.device), y.to(args.device)  # (B, C, H, W), (B, 10)
 
         # Stack the k views along the batch dimension for encoding
@@ -727,10 +759,15 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
         # Let's rearrange to handle all at once.
         # shape: B x k x C x H x W -> (B*k, C, H, W)
 
-        B, k, C_in, H, W = x.shape
+        # B, k, C_in, H, W = x.shape
+        #
+        # x = x.view(B * k, C_in, H, W)
+        # y = y.view(B * k)
 
-        x = x.view(B * k, C_in, H, W)
-        y = y.view(B * k)
+        B, C_in, H, W = x.shape
+
+        x = x.view(B, C_in, H, W)
+        y = y.view(B)
 
         logits_z, logits_y, x_hat, mu, logvar = model(x, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
         # VAE two loss: KLD + MSE
@@ -744,30 +781,30 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
         x_hat = x_hat.view(x_hat.size(0), -1)
         x = x.view(x.size(0), -1)
         # mse loss for vae # torch.mean((x_hat - x) ** 2 * (x_inverse_m > 0).int()) / 0.75 # reconstruction_function(x_hat, x_inverse_m)  # mse loss for vae
-        BCE = reconstruction_function(x_hat, x)
+        # BCE = reconstruction_function(x_hat, x)
         # Calculate the L2-norm
 
         # Normalize each embedding
-        z = F.normalize(logits_z, p=2, dim=1)  # [B*k, d]
+        # z = F.normalize(logits_z, p=2, dim=1)  # [B*k, d]
 
         # Reshape back to [B, k, d]
-        z = z.view(B, k, args.dimZ)
+        # z = z.view(B, args.dimZ)
 
         # Compute centroids: mean over k
-        centroids = z.mean(dim=1)  # [B, d]
+        # centroids = z.mean(dim=1)  # [B, d]
 
         # We want C = [d x B], so transpose:
-        C = centroids.transpose(0,1)  # [d, B]
+        # C = centroids.transpose(0, 1)  # [d, B]
 
         # Compute nuclear norm of C
         # In newer PyTorch, we can use torch.linalg.svd
         # S: singular values
-        U, S, V = torch.svd(C)  # or torch.linalg.svd(C), depending on PyTorch version
-        nuclear_norm = S.sum()
+        # U, S, V = torch.svd(C)  # or torch.linalg.svd(C), depending on PyTorch version
+        # nuclear_norm = S.sum()
 
-        # nuclear_norm = maximum_manifold_capacity(logits_z, gamma=0)
+        # nuclear_norm = maximum_manifold_capacity(logits_z, gamma=0) + BCE
 
-        loss = args.beta * KLD_mean + BCE + H_p_q - args.mcr_rate * nuclear_norm #  + H_p_q + H_p_q - nuclear_norm  + H_p_q + H_p_q + nuclear_norm
+        loss = args.beta * KLD_mean + H_p_q #- args.mcr_rate * nuclear_norm #  + H_p_q + H_p_q - nuclear_norm  + H_p_q + H_p_q + nuclear_norm
 
         optimizer.zero_grad()
         loss.backward()
@@ -798,16 +835,16 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
                   + ', '.join([f'{k} {v:.3f}' for k, v in metrics.items()]))
             x_cpu = x.cpu().data
             x_cpu = x_cpu.clamp(0, 1)
-            x_cpu = x_cpu.view(x_cpu.size(0), 1, 28, 28)
+            x_cpu = x_cpu.view(x_cpu.size(0), 3, 224, 224)
             grid = torchvision.utils.make_grid(x_cpu, nrow=4)
             plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
             # plt.show()
 
-            x_hat_cpu = x_hat.cpu().data
-            x_hat_cpu = x_hat_cpu.clamp(0, 1)
-            x_hat_cpu = x_hat_cpu.view(x_hat_cpu.size(0), 1, 28, 28)
-            grid = torchvision.utils.make_grid(x_hat_cpu, nrow=4)
-            plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
+            # x_hat_cpu = x_hat.cpu().data
+            # x_hat_cpu = x_hat_cpu.clamp(0, 1)
+            # x_hat_cpu = x_hat_cpu.view(x_hat_cpu.size(0), 3, 224, 224)
+            # grid = torchvision.utils.make_grid(x_hat_cpu, nrow=4)
+            # plt.imshow(np.transpose(grid, (1, 2, 0)))  # 交换维度，从GBR换成RGB
             # plt.show()
             # print("print x grad")
             # print(input_gradient)
@@ -817,12 +854,13 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
 # here we prepare the unlearned model, and we can calculate the model difference
 def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn, args, noise_flag):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-
+    step = 0
     acc_test = []
     backdoor_acc_list = []
 
     print(len(erasing_dataset.dataset))
-    for epoch in range(args.num_epochs+5):
+
+    for epoch in range(1):
         model.train()
         for (x_e, y_e), (x_r, y_r) in zip(erasing_dataset, dataloader_remaining_after_aux):
             x_e, y_e = x_e.to(args.device), y_e.to(args.device)  # (B, C, H, W), (B, 10)
@@ -1137,7 +1175,7 @@ def train_reconstructor(vib, train_loader, reconstruction_function, args):
             grad = grad.view(grad.size(0), 1, 16, 16)
             # img = img.view(img.size(0), -1)  # Flatten the images
             output = reconstructor(grad)
-            # output = output.view(output.size(0), 3, 32, 32)
+            # output = output.view(output.size(0), 3, 224, 224)
             x_hat = vib.reconstruction(output, img)
             img = img.view(img.size(0), -1)  # Flatten the images
             loss = reconstruction_function(x_hat, img)
@@ -1181,7 +1219,7 @@ def evaluate_reconstructor(vib, reconstructor, train_loader, reconstruction_func
             grad = grad.view(grad.size(0), 1, 16, 16)
             # img = img.view(img.size(0), -1)  # Flatten the images
             output = reconstructor(grad)
-            # output = output.view(output.size(0), 3, 32, 32)
+            # output = output.view(output.size(0), 3, 224, 224)
             x_hat = vib.reconstruction(output, img)
             img = img.view(img.size(0), -1)  # Flatten the images
             loss = reconstruction_function(x_hat, img)
@@ -1457,8 +1495,290 @@ def prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args
     return unlearning_loader_with_c_p
 
 
+class UnlearningTopKDataset(Dataset):
+    def __init__(self, images, topk_centers, labels, positive_images):
+        """
+        images: list (or tensor) of shape [N, C, H, W]
+        topk_centers: list (or tensor) of shape [N, d]
+        labels: list (or tensor) of shape [N]
+        """
+        self.images = images
+        self.topk_centers = topk_centers
+        self.labels = labels
+        self.positive_images = positive_images
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        # Return (sample, topk_center, label)
+        return self.images[idx], self.topk_centers[idx], self.labels[idx], self.positive_images[idx]
+
+
+class TopKSamplesDataset(Dataset):
+    """
+    Each item:
+      (topk_images, center_z_new, topk_labels)
+    where:
+      topk_images:  [K, C, H, W]
+      center_z_new: [d]
+      topk_labels:  [K]
+    """
+    def __init__(self, all_topk_images, all_topk_labels, all_topk_centers):
+        self.topk_images = all_topk_images   # list or tensor of length M, each [K, C, H, W]
+        self.topk_labels = all_topk_labels   # list or tensor of length M, each [K]
+        self.topk_centers = all_topk_centers # shape [M, d] or list of length M
+
+    def __len__(self):
+        return len(self.topk_images)
+
+    def __getitem__(self, idx):
+        return (
+            self.topk_images[idx],   # shape [K, C, H, W]
+            self.topk_centers[idx],  # shape [d]
+            self.topk_labels[idx]    # shape [K]
+        )
+
+
+def create_unlearning_with_topk_loader(vib, unlearning_loader, remaining_loader, args, top_k=5, shuffle=True):
+    """
+    Returns a DataLoader whose batches yield tuples:
+        (unlearning_image, topk_center, label)
+    for each sample in unlearning_loader.
+    """
+
+    vib.eval()
+
+    # -------------------------------------------------
+    # 1) Gather all embeddings from the remaining_loader
+    # -------------------------------------------------
+    all_remaining_images_list = []
+    all_remaining_embeddings = []
+    all_remaining_labels = []
+    with torch.no_grad():
+        for step, (images, labels) in enumerate(remaining_loader):
+            images = images.to(args.device)
+            labels = labels.to(args.device)
+
+            z, logits_y, x_hat, mu, logvar = vib(images, mode='with_reconstruction')
+            # Normalize embeddings for consistent "nearest neighbor" measure
+            z = F.normalize(z, p=2, dim=1)
+
+            # Move to CPU to avoid large GPU memory usage
+            all_remaining_images_list.append(images.cpu())
+            all_remaining_embeddings.append(z.cpu())
+            all_remaining_labels.append(labels.cpu())
+
+    # Concatenate all the remaining embeddings into one tensor
+    all_remaining_images = torch.cat(all_remaining_images_list, dim=0).to(args.device)  # shape [N, C, H, W]
+    all_remaining_embeddings = torch.cat(all_remaining_embeddings, dim=0).to(args.device)  # [N, d]
+    all_remaining_labels = torch.cat(all_remaining_labels, dim=0).to(args.device)          # [N]
+
+    # -----------------------------------------------------
+    # 2) For each sample in unlearning_loader, find top-K
+    #    neighbors in 'all_remaining_embeddings', then store
+    #    (unlearning_image, topk_center, label)
+    # -----------------------------------------------------
+    unlearning_images_list = []
+    topk_centers_list = []
+    positive_images_list = []
+    unlearning_labels_list = []
+
+
+    # For the second dataset: top-K actual samples from the remaining set
+    all_topk_images_list  = []
+    all_topk_labels_list  = []
+    all_topk_centers_list = []
+
+
+    with torch.no_grad():
+        for step, (images, labels) in enumerate(unlearning_loader):
+            images = images.to(args.device)
+            labels = labels.to(args.device)
+
+            z_unlearn, logits_y, x_hat, mu, logvar = vib(images, mode='with_reconstruction')
+            z_unlearn = F.normalize(z_unlearn, p=2, dim=1)  # shape [B, d]
+
+            # Similarity of each unlearning embedding vs all remaining
+            sim = torch.mm(z_unlearn, all_remaining_embeddings.T)  # [B, N], dot product => cosine
+
+            # Indices of top-k most similar
+            _, topk_indices = torch.topk(sim, k=top_k, dim=1)
+
+            # For each sample in this batch...
+            for i in range(z_unlearn.size(0)):
+                # ----- (A) Gather top-K neighbors in "embedding space" -----
+                topk_idxs_i = topk_indices[i]  # shape [top_k]
+
+                # get top-k neighbors
+                neighbors = all_remaining_embeddings[topk_indices[i]]  # [top_k, d]
+                # shape [top_k, C, H, W]
+                neighbor_images    = all_remaining_images[topk_idxs_i]
+                # shape [top_k]
+                neighbor_labels    = all_remaining_labels[topk_idxs_i]
+
+                # center = mean of top-k neighbors
+                center_i = neighbors.mean(dim=0)  # [d]
+
+                # Store the original unlearning image, top-k center, label
+                # (move them to CPU or keep on GPU, depending on your pipeline)
+                unlearning_images_list.append(images[i].cpu())
+                topk_centers_list.append(center_i.cpu())
+                unlearning_labels_list.append(labels[i].cpu())
+                positive_images_list.append(neighbor_images[0].cpu())
+                # Instead of appending them all at once, do it one by one
+                for k_idx in range(len(topk_idxs_i)):
+                    # Single neighbor image, label
+                    one_neighbor_img = neighbor_images[k_idx]  # shape [C, H, W]
+                    one_neighbor_lbl = neighbor_labels[k_idx]  # scalar label
+
+                    # Append individually
+                    all_topk_images_list.append(one_neighbor_img.cpu())
+                    all_topk_labels_list.append(one_neighbor_lbl.cpu())
+
+                    # The center is the same for each neighbor in this top-k set
+                    all_topk_centers_list.append(center_i.cpu())
+
+
+    # -----------------------------------------------------
+    # 3) Create Dataset and DataLoader
+    # -----------------------------------------------------
+    # Turn lists into tensors (if desired) or keep them as lists
+    unlearning_images_tensor = torch.stack(unlearning_images_list, dim=0)  # [M, C, H, W]
+    topk_centers_tensor = torch.stack(topk_centers_list, dim=0)           # [M, d]
+    unlearning_labels_tensor = torch.stack(unlearning_labels_list, dim=0) # [M]
+    positive_images_tensor = torch.stack(positive_images_list, dim=0)  # [M, C, H, W]
+
+    dataset = UnlearningTopKDataset(
+        images=unlearning_images_tensor,
+        topk_centers=topk_centers_tensor,
+        labels=unlearning_labels_tensor,
+        positive_images=positive_images_tensor
+    )
+    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=shuffle)
+
+    topk_dataset = TopKSamplesDataset(
+        all_topk_images_list,
+        all_topk_labels_list,
+        torch.stack(all_topk_centers_list, dim=0)  # shape [M, d]
+    )
+
+    topk_samples_loader = DataLoader(
+        topk_dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle
+    )
+
+    return loader, topk_samples_loader
+
+
+def precompute_class_centers_with_logits(vib, remaining_loader, device):
+    """
+    1. 遍历 remaining_loader
+    2. 收集每个类别下的 logits_z
+    3. 计算类别中心
+    4. 返回:
+       class2center[c] = 该类别 logits_z 的中心向量
+       class2reps[c] = 该类别下所有 logits_z（后续随机挑选做 positive）
+    """
+    vib.eval()  # 如果你的 vib 有BN/Dropout，需要在推理时设置eval
+    class2reps = defaultdict(list)  # c -> list of logits_z
+
+    with torch.no_grad():
+        for images, labels in remaining_loader:
+            images = images.to(device)
+            labels = labels.to(device)
+
+            # 前向传播
+            logits_z, logits_y, _, mu, _ = vib(images, mode='with_reconstruction')
+            # 这里的 logits_z 就是你想要的表示 (batch_size, feature_dim)
+
+            for i, label in enumerate(labels):
+                class2reps[label.item()].append(logits_z[i])  # 逐个样本保存
+
+    # 计算中心
+    class2center = dict()
+    for c, rep_list in class2reps.items():
+        rep_tensor = torch.stack(rep_list, dim=0)  # [N, feature_dim]
+        center = rep_tensor.mean(dim=0)  # [feature_dim]
+        class2center[c] = center
+
+    return class2center, class2reps
+
+
+def find_center_and_positive(y, class2center, class2reps):
+    """
+    输入:
+      y: [batch_size], 当前批次样本的标签 (tensor)
+      class2center: dict, c -> center logits_z (tensor)
+      class2reps: dict, c -> list of logits_z (tensor)
+    输出:
+      center_z: [batch_size, feature_dim], 对应各标签的中心向量
+      positive_z: [batch_size, feature_dim], 随机选的同类表示
+    """
+    center_list = []
+    positive_list = []
+
+    for label in y:
+        label_int = label.item()
+        center_list.append(class2center[label_int])  # 中心向量
+        # 随机选一个同类样本
+        pos_rep = random.choice(class2reps[label_int])
+        positive_list.append(pos_rep)
+
+    # 拼成一个 batch
+    center_z = torch.stack(center_list, dim=0)
+    positive_z = torch.stack(positive_list, dim=0)
+    return center_z, positive_z
+
+
+def unlearning_with_topk(vib, unlearning_loader_with_center, top_k_nearest_loader, loss_fn, args):
+    optimizer = torch.optim.Adam(vib.parameters(), lr=args.lr)
+    vib.train()
+    for epoch in range(args.unl_epochs):
+        epoch_loss = 0
+
+        for x, center_z_new, y, positive_x in unlearning_loader_with_center:
+            x, center_z_new,  y , positive_x = x.to(args.device), center_z_new.to(args.device), y.to(args.device), positive_x.to(args.device)
+            logits_z, logits_y, _, mu, _ = vib(x, mode='with_reconstruction')
+            logits_z_p, logits_y_p, _, mu_p, _ = vib(positive_x, mode='with_reconstruction')
+
+            H_p_q = loss_fn(logits_y_p, y)
+
+            similarity_loss_positive = 1 - F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean()
+            similarity_loss_negative = 1 - F.cosine_similarity(logits_z, center_z_new, dim=-1).mean()
+            loss = 0.1  * (F.mse_loss(logits_z_p, center_z_new) - 1.0001 * F.mse_loss(logits_z, center_z_new) ) + 0.1*H_p_q
+            #loss = 0.1 * (0.95 * F.cosine_similarity(logits_z, center_z_new, dim=-1).mean() * F.cosine_similarity(logits_z, center_z_new, dim=-1).mean() -F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean() * F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean() )
+
+
+            epoch_loss += loss.item()
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        print(f"Epoch {epoch + 1}/{args.unl_epochs}, Loss: {epoch_loss:.4f}, H_p_q:{H_p_q.item()}")
+
+        # for x, center_z_new, y in top_k_nearest_loader:
+        #     x, center_z_new,  y = x.to(args.device), center_z_new.to(args.device), y.to(args.device)
+        #     logits_z, logits_y, _, mu, _ = vib(x, mode='with_reconstruction')
+        #
+        #     loss = F.mse_loss(logits_z, center_z_new)
+        #     epoch_loss += loss.item()
+        #
+        #     # Backward pass
+        #     optimizer.zero_grad()
+        #     loss.backward()
+        #     optimizer.step()
+        #
+        # print(f"Epoch {epoch + 1}/{args.unl_epochs}, Loss: {epoch_loss:.4f}")
+
+
+    return vib
+
 # Triplet contrastive unlearning
-def triplet_contrastive_unlearning(vib, unlearning_loader_with_c_p, margin, epochs, args):
+def triplet_contrastive_unlearning(vib, unlearning_loader, remaining_loader, margin, epochs, loss_fn, args):
     optimizer = torch.optim.Adam(vib.parameters(), lr=args.lr)
 
 
@@ -1466,13 +1786,20 @@ def triplet_contrastive_unlearning(vib, unlearning_loader_with_c_p, margin, epoc
         vib.train()
         epoch_loss = 0
         #zip(erasing_dataset, dataloader_remaining_after_aux)
-        for x, y, center_z, positive_z in unlearning_loader_with_c_p:
-            x, y = x.to(args.device), y.to(args.device)
-            logits_z, logits_y, _, mu, _ = vib(x, mode='with_reconstruction')
+        #for step, (x, y) in enumerate(unlearning_loader):
+        for (x_e, y_e), (x_r, y_r) in zip(unlearning_loader, remaining_loader):
+            x_e, y_e = x_e.to(args.device), y_e.to(args.device)
+            x_r, y_r = x_r.to(args.device), y_r.to(args.device)
+            logits_z_e, logits_y_e, _, mu_e, _ = vib(x_e, mode='with_reconstruction')
+            logits_z_r, logits_y_r, _, mu_r, _ = vib(x_r, mode='with_reconstruction')
 
-
+            class2center, class2reps = precompute_class_centers_with_logits(
+                vib, remaining_loader, device=args.device
+            )
+            center_z, positive_z = find_center_and_positive(y_e, class2center, class2reps)
+            H_p_q_r = loss_fn(logits_y_r, y_r)
             # Compute loss
-            loss = triplet_loss(logits_z, center_z, positive_z, margin, args.distance_rate)
+            loss = triplet_loss(logits_z_e, center_z, positive_z, margin, args.distance_rate) #+ H_p_q_r
             epoch_loss += loss.item()
 
             # Backward pass
@@ -1481,6 +1808,11 @@ def triplet_contrastive_unlearning(vib, unlearning_loader_with_c_p, margin, epoc
             optimizer.step()
 
         print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss:.4f}")
+        # calculate berfore unlearning
+        infer_acc = membership_inf_results(infer_model, vib, unl_infer_data_loader, "after unl")
+
+        #vib.eval()
+        acc_t = eva_vib(vib, test_loader, args, name='on test dataset after unlearning', epoch=999)
 
     return vib
 
@@ -1516,22 +1848,22 @@ args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available
 args.iid = True
 # args.model = 'z_linear'
 args.model = 'Normal'
-args.num_epochs = 5
+args.num_epochs = 20
 args.unl_epochs = 1
-args.infer_t_epochs = 1
-args.dataset = 'MNIST'
+args.infer_t_epochs = 5
+args.dataset = 'miniIMAGENET'
 args.add_noise = False
 args.beta = 0.0001
-args.mcr_rate = 0   # 0.0001
+args.mcr_rate = 0.001# 0 #0.001
 args.mse_rate = 0.1
 args.lr = 0.0005
-args.distance_rate = 0.0001
-args.margin = 0.001
+args.distance_rate = 0.01
+args.margin = 0.001 #0.01
 args.unlearn_learning_rate = 0.1
 args.ep_distance = 20
-args.dimZ =  32 #10 /2  # 40 # 2
-args.batch_size = 16
-args.unlearning_size =100
+args.dimZ =  64 #10 /2  # 40 # 2
+args.batch_size = 4
+args.unlearning_size =1000
 args.erased_local_r = 0.02
 args.construct_size = 0.02
 # args.auxiliary_size = 0.01
@@ -1558,31 +1890,17 @@ if args.dataset == 'MNIST':
         T.ToTensor()
         # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-
     trans_mnist = transforms.Compose([transforms.ToTensor(), ])
-    # Base transforms (convert to tensor and normalize)
-    base_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-    ])
 
-    # Augmentation transforms:
-    augmentation_transform = transforms.Compose([
-        transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-    ])
     train_set = MNIST('../data/mnist', train=True, transform=None, download=True)
-    test_set = MNIST('../data/mnist', train=False, transform=base_transform, download=True)
-    multi_view_dataset = MultiViewMNIST(train_set, args.k, base_transform, base_transform)
-    original_train_set = MNIST('../data/mnist', train=True, transform=base_transform, download=True)
+    test_set = MNIST('../data/mnist', train=False, transform=trans_mnist, download=True)
+    multi_view_dataset = MultiViewMNIST(train_set, args.k, trans_mnist, trans_mnist)
+    original_train_set = MNIST('../data/mnist', train=True, transform=trans_mnist, download=True)
 
 elif args.dataset == 'CIFAR10':
     train_transform = T.Compose([  # T.RandomCrop(32, padding=4),
         T.ToTensor(),
-    ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608)),                                 T.RandomHorizontalFlip(),
-    # Transforms
-
+    ])
     test_transform = T.Compose([T.ToTensor(), ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608))
     train_set = CIFAR10('../data/cifar', train=True, transform=None, download=True)
     test_set = CIFAR10('../data/cifar', train=False, transform=train_transform, download=True)
@@ -1600,34 +1918,41 @@ elif args.dataset == 'CelebA':
     train_set = CelebA(data_path, split='train', target_type = 'attr', transform=train_transform, download=False)
     test_set = CelebA(data_path, split='test', target_type = 'attr', transform=train_transform, download=False)
 
+elif args.dataset == 'miniIMAGENET':
+    # 定义图像变换
+    train_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),  # 调整图像尺寸
+        transforms.RandomHorizontalFlip(),  # 随机水平翻转
+        transforms.ToTensor(),  # 转换为 Tensor
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],  # 标准化（与预训练模型一致）
+                             std=[0.229, 0.224, 0.225])
+    ])
+
+    train_dir = "/home/weiqiwan/Data/data/immagenet/train"  #"/kaggle/input/miniimagenet/train"
+
+    test_dir = "/home/weiqiwan/Data/data/immagenet/test"  #"/kaggle/input/miniimagenet/test"
+
+    # 加载数据集
+    # train_set = datasets.ImageFolder(root=train_dir, transform=transform)
+    # test_set = datasets.ImageFolder(root=test_dir, transform=transform)
+    # test_transform = T.Compose([T.ToTensor(), ])  # T.Normalize((0.4914, 0.4822, 0.4465), (0.2464, 0.2428, 0.2608))
+    train_set = datasets.ImageFolder(root=train_dir, transform=train_transforms)
+    test_set = datasets.ImageFolder(root=test_dir, transform=train_transforms)
+    # multi_view_dataset = MultiViewCIFAR(train_set, args.k, transform, transform)
+    # original_train_set = datasets.ImageFolder(root=train_dir, transform=transform)
 
 
-train_loader = DataLoader(multi_view_dataset, batch_size=args.batch_size, shuffle=True)
-original_train_loader = DataLoader(original_train_set, batch_size=args.batch_size, shuffle=False)
+
+
+
+train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+#original_train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=False)
 test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=True )
 
-# Extract all indices from the original dataset
-all_indices = list(range(len(original_train_set)))
-
-# Randomly select indices for the unlearning dataset
-unlearning_indices = random.sample(all_indices, args.unlearning_size)
-
-# Calculate remaining indices
-remaining_indices = list(set(all_indices) - set(unlearning_indices))
-
-# Create Subset datasets
-unlearning_dataset = Subset(original_train_set, unlearning_indices)
-remaining_dataset = Subset(original_train_set, remaining_indices)
 
 
-
-# Create new DataLoaders
-unlearning_loader = DataLoader(unlearning_dataset, batch_size=args.batch_size, shuffle=True)
-remaining_loader = DataLoader(remaining_dataset, batch_size=args.batch_size, shuffle=True)
-
-
-full_size = len(multi_view_dataset)
-original_size = len(original_train_set)
+full_size = len(train_set)
+original_size = len(train_set)
 print("full size", full_size, "original_size", original_size)
 
 
@@ -1667,16 +1992,42 @@ end_time = time.time()
 running_time = end_time - start_time
 print(f'VIB Training took {running_time} seconds')
 
+
+
 # train infer model
 
-infer_model = get_membership_inf_model(original_train_set, test_set, vib, args)
+vib_for_infer = copy.deepcopy(vib)
+
+infer_model = get_membership_inf_model(train_set, test_set, vib_for_infer, args)
 
 ########
 
+
+
 vib.eval()
 acc_t = eva_vib(vib, test_loader, args, name='on test dataset before unlearning', epoch=999)
-acc_r = eva_vib(vib, original_train_loader, args, name='on the remaining training before unlearning', epoch=999)
+# acc_r = eva_vib(vib, original_train_loader, args, name='on the remaining training before unlearning', epoch=999)
 
+
+#prepare unlearning loader
+# Extract all indices from the original dataset
+all_indices = list(range(len(train_set)))
+
+# Randomly select indices for the unlearning dataset
+unlearning_indices = random.sample(all_indices, args.unlearning_size)
+
+# Calculate remaining indices
+remaining_indices = list(set(all_indices) - set(unlearning_indices))
+
+# Create Subset datasets
+unlearning_dataset = Subset(train_set, unlearning_indices)
+remaining_dataset = Subset(train_set, remaining_indices)
+
+
+
+# Create new DataLoaders
+unlearning_loader = DataLoader(unlearning_dataset, batch_size=args.batch_size, shuffle=True)
+remaining_loader = DataLoader(remaining_dataset, batch_size=args.batch_size, shuffle=True)
 
 
 acc_ua = eva_vib(vib, unlearning_loader, args, name='on the unlearning data before unlearning', epoch=999)
@@ -1686,20 +2037,24 @@ labeled_unlearn_set = CustomLabelDataset(unlearning_dataset, 0)  # we set label 
 
 unl_infer_data_loader = DataLoader(labeled_unlearn_set, batch_size=args.batch_size, shuffle=True)
 # calculate after unlearning
-infer_acc = membership_inf_results(infer_model, vib, unl_infer_data_loader, "before unl")
+infer_acc = membership_inf_results(infer_model, vib_for_infer, unl_infer_data_loader, "before unl")
 
 
 
 
 # unlearning
 
-unlearning_loader_with_c_p = prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args)
+#unlearning_loader_with_c_p = prepare_centroid_and_positive(vib, unlearning_loader, remaining_loader, args)
 
+unlearning_with_new_center, top_k_nearest_loader = create_unlearning_with_topk_loader(vib, unlearning_loader, remaining_loader, args, top_k=5, shuffle=True)
 # record time for unlearning
+
 start_time = time.time()
+vib_unlearnined = copy.deepcopy(vib)
 
-vib_unlearnined = triplet_contrastive_unlearning(vib, unlearning_loader_with_c_p, args.margin, args.unl_epochs, args)
+#vib_unlearnined = triplet_contrastive_unlearning(vib_unlearnined, unlearning_loader, remaining_loader, args.margin, args.unl_epochs, loss_fn, args)
 
+vib_unlearnined = unlearning_with_topk(vib_unlearnined, unlearning_with_new_center, top_k_nearest_loader, loss_fn, args)
 
 print("Unlearning completed.")
 
@@ -1714,27 +2069,11 @@ infer_acc = membership_inf_results(infer_model, vib_unlearnined, unl_infer_data_
 
 vib.eval()
 acc_t = eva_vib(vib_unlearnined, test_loader, args, name='on test dataset after unlearning', epoch=999)
-acc_r = eva_vib(vib_unlearnined, original_train_loader, args, name='on the remaining training after unlearning', epoch=999)
+#acc_r = eva_vib(vib_unlearnined, original_train_loader, args, name='on the remaining training after unlearning', epoch=999)
 acc_ua = eva_vib(vib_unlearnined, unlearning_loader, args, name='on the unlearning data after unlearning', epoch=999)
 print("acc_ua:", 1 - acc_ua)
 
 
 
 
-
-
-# for retraining
-
-# Create Subset datasets
-unlearning_dataset = Subset(train_set, unlearning_indices)
-remaining_dataset = Subset(train_set, remaining_indices)
-
-unlearning_dataset = TransformSubset(train_set, unlearning_indices, transform=trans_mnist)
-
-labeled_unlearn_set = CustomLabelDataset(unlearning_dataset, 0)  # we set label to 0 as the unlearned should not in the training set
-
-
-
-unl_infer_data_loader = DataLoader(labeled_unlearn_set, batch_size=args.batch_size, shuffle=True)
-# calculate after unlearning
 
