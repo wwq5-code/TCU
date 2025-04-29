@@ -4,16 +4,25 @@ import matplotlib.ticker as ticker
 
 
 # user num = 50
-labels = ['100', '120', '140', '160', '180', '200']
+labels = ['200', '400', '600', '800', '1000', '1200']
 #unl_fr = [10*10*0.22 *5, 10*10*0.22*5, 10*10*0.22 *5, 10*10*0.22*5 , 10*10*0.22*5  , 10*10*0.22*5  ]
 
 
 
-unl_vbu = [0.177, 0.199 , 0.240 , 0.287 , 0.310, 0.331]
+unl_vbu = [0.331, 0.672 , 0.984 , 1.387 , 1.6310, 2.01 ]
 
-unl_mbu = [0.208, 0.232, 0.273, 0.311, 0.349, 0.412]
-unl_retrain = [1190, 1192, 1188, 1193, 1191, 1189]
+unl_mbu = [2.3742, 5.1932, 7.0932, 9.327, 11.832, 13.62]
+unl_retrain = [1783, 1783, 1783, 1783, 1783, 1783]
 
+salun = [2.43, 5.86, 8.33, 10.782, 12.5682, 15.28]
+
+
+for i in range(len(labels)):
+
+    unl_retrain[i] = unl_retrain[i]
+    unl_mbu[i] = unl_mbu[i]
+    unl_vbu[i] = unl_vbu[i]
+    salun[i] = salun[i]
 
 
 for i in range(len(labels)):
@@ -37,14 +46,18 @@ plt.figure()
 #plt.bar(x - width / 6 , unl_muv_CIFAR, width=width/6,  label='MUA-MD CIFAR10', color='#F7D58B', edgecolor='black' , hatch='x')
 #E58579, 80BA8A
 
-
 # F7D58B, 9CD1C8, C6B3D3, E58579
-plt.bar(x - width / 4  , unl_vbu,   width=width/4, label='VBU', color='#61DE45', edgecolor='black',  hatch='x')
+plt.bar(x - width / 5 -  width / 10, unl_vbu,   width=width/5, label='VBU', color='#61DE45', edgecolor='black',  hatch='x')
 
 # F7D58B , 6BB7CA
-plt.bar(x , unl_mbu, width=width/4, label='TCU', color='#F7D58B', edgecolor='black', hatch='*')
+plt.bar( x -  width / 10, unl_mbu , width=width/5, label='TCU-S', color='#F7D58B', edgecolor='black', hatch='*')
 
-plt.bar(x + width / 4 , unl_retrain, width=width/4, label='Retrain', color='#C6B3D3', edgecolor='black', hatch='o')
+
+plt.bar( x + width / 5 -  width / 10  , salun, width=width/5, label='SalUn', color='#C6B3D3', edgecolor='black', hatch='\\')
+
+
+
+plt.bar(x + width / 5 + width / 5 -  width / 10, unl_retrain, width=width/5, label='Retrain', color='#87B5B2', edgecolor='black', hatch='o')
 
 
 #plt.bar(x + width / 6 + width / 6 + width/6  , unl_mib_CelebA,   width=width/6, label='MIB CelebA', color='#E58579', edgecolor='black', hatch='\\')
@@ -64,9 +77,10 @@ plt.ylabel('Running Time (s)', fontsize=20)
 plt.xticks(x, labels, fontsize=20)
 # ax.set_xticklabels(labels,fontsize=15)
 
-my_y_ticks = np.arange(0, 2000, 400)
+my_y_ticks = np.arange(0, 2010, 400)
 # Make y-axis a log scale:
 plt.yscale('log')
+plt.yticks(fontsize=20)
 # plt.gca().yaxis.set_major_formatter(ticker.ScalarFormatter())
 # plt.gca().yaxis.get_major_formatter().set_scientific(True)
 # plt.gca().yaxis.get_major_formatter().set_useOffset(False)
@@ -76,7 +90,7 @@ plt.yscale('log')
 # plt.grid(axis='y')
 # plt.legend(loc='upper left', fontsize=20)
 
-plt.legend( frameon=True, facecolor='#EAEAF2', loc='center', bbox_to_anchor=(0.52001, -0.21), ncol=3, fontsize=14.6,)
+plt.legend( frameon=True, facecolor='#EAEAF2', loc='center', bbox_to_anchor=(0.52001, -0.21), ncol=4, fontsize=14.6,)
 
 # mode="expand",  columnspacing=1.0,  borderaxespad=0., framealpha=0.5,handletextpad=0.5
 #title = 'Methods and Datasets',

@@ -12,22 +12,22 @@ x=[1, 2, 3, 4, 5, 6]
 # attack_for_plt=[0, 0.3524, 0, 0.1762, 0.1762]
 # basic_for_plt=[99.8, 99.8, 99.8, 99.8, 99.8]
 
-labels = ['100', '120', '140', '160', '180', '200']
+labels = ['200', '400', '600', '800', '1000', '1200']
 # unl_org = [97.77, 97.55, 97.35, 97.29, 97.21, 97.21]
 
 # unl_hess_r = [96.6, 96.66, 96.04, 95.94, 95.85, 97.21]
-OUL = [0.8225, 0.8241, 0.8242, 0.8230, 0.8216, 0.8215]
+OUL = [0.8174, 0.8094, 0.8023, 0.7910, 0.7702, 0.7510]
 
-org_acc = [0.8299, 0.8300, 0.8298, 0.8299, 0.8300, 0.8299]
+org_acc = [0.8251, 0.8251, 0.8251, 0.8251, 0.8251, 0.8251]
 
-vbu_acc = [0.9445, 0.9445,  0.9401, 0.9411, 0.9472, 0.9467]
+salun_acc = [0.8083, 0.8027,  0.8054, 0.8087, 0.8095, 0.8081]
 # unl_ss_wo = [94.32, 94.53, 94.78, 93.38, 94.04, 97.21]
-vbu_ldp_acc = [0.8066, 0.8061, 0.8054, 0.8049, 0.8040, 0.8030]
+vbu_ldp_acc = [0.8023, 0.7983, 0.7822, 0.7694, 0.7506, 0.7223]
 
 for i in range(len(OUL)):
     OUL[i] = OUL[i]*100
     org_acc[i] = org_acc[i]*100
-    vbu_acc[i] = vbu_acc[i]*100
+    salun_acc[i] = salun_acc[i]*100
     vbu_ldp_acc[i] = vbu_ldp_acc[i] * 100
 
 plt.style.use('seaborn')
@@ -45,12 +45,10 @@ plt.plot(x, org_acc, linestyle='--', color='#9BC985',  marker='s', fillstyle='fu
 
 
 plt.plot(x, OUL, linestyle='-', color='#797BB7', marker='o', fillstyle='full', markevery=markevery,
-         label='TCU', linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+         label='TCU-S', linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
 
 
-
-
-#plt.plot(x, vbu_acc, linestyle='-.', color='#2A5522',  marker='D', fillstyle='full', markevery=markevery, label='GA',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+plt.plot(x, salun_acc, linestyle='-.', color='#B595BF',  marker='d', fillstyle='full', markevery=markevery, label='SalUn',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
 
 plt.plot(x, vbu_ldp_acc, linestyle='-.', color='#E1C855',  marker='^', fillstyle='full', markevery=markevery,
          label='VBU',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
@@ -60,7 +58,7 @@ plt.plot(x, vbu_ldp_acc, linestyle='-.', color='#E1C855',  marker='^', fillstyle
 leg = plt.legend(fancybox=True, shadow=True)
 # plt.xlabel('Malicious Client Ratio (%)' ,fontsize=16)
 plt.ylabel('Test Accuracy (%)' ,fontsize=24)
-my_y_ticks = np.arange(79., 85, 1)
+my_y_ticks = np.arange(72.0, 85.0, 2)
 plt.yticks(my_y_ticks,fontsize=20)
 plt.xlabel('$\it USS$' ,fontsize=20)
 
@@ -71,7 +69,7 @@ plt.xticks(x, labels, fontsize=20)
 
 
 # plt.title('(c) Utility Preservation', fontsize=24)
-plt.legend(loc=(0.53, 0.31),fontsize=20)
+plt.legend(loc=(0.03, 0.01),fontsize=20)
 plt.tight_layout()
 #plt.title("MNIST")
 plt.rcParams['figure.figsize'] = (2.0, 1)

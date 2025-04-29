@@ -12,22 +12,22 @@ x=[1, 2, 3, 4, 5, 6]
 # attack_for_plt=[0, 0.3524, 0, 0.1762, 0.1762]
 # basic_for_plt=[99.8, 99.8, 99.8, 99.8, 99.8]
 
-labels = ['100', '120', '140', '160', '180', '200']
+labels = ['200', '400', '600', '800', '1000', '1200']
 # unl_org = [97.77, 97.55, 97.35, 97.29, 97.21, 97.21]
 
 # unl_hess_r = [96.6, 96.66, 96.04, 95.94, 95.85, 97.21]
-OUL = [0.6399, 0.6499, 0.67849, 0.6966, 0.71669, 0.7250]
+OUL = [0.59032, 0.63032, 0.6700, 0.67842, 0.6940, 0.7633]
 
-org_acc = [0.5300, 0.5302, 0.5301, 0.5301, 0.5302, 0.5298]
+org_acc = [0.5483, 0.5483, 0.5483, 0.5483, 0.5483, 0.5483]
 
-vbu_acc = [0.9442, 0.9445,  0.9401, 0.9411, 0.9472, 0.9467]
+salun_acc = [0.5500, 0.55,  0.561, 0.5711, 0.57500, 0.582]
 # unl_ss_wo = [94.32, 94.53, 94.78, 93.38, 94.04, 97.21]
-vbu_ldp_acc = [0.5599, 0.5999, 0.6199, 0.6599, 0.6899, 0.7154]
+vbu_ldp_acc = [0.5600, 0.5881, 0.6102, 0.64990, 0.6708, 0.7203]
 
 for i in range(len(OUL)):
     OUL[i] = OUL[i]*100
     org_acc[i] = org_acc[i]*100
-    vbu_acc[i] = vbu_acc[i]*100
+    salun_acc[i] = salun_acc[i]*100
     vbu_ldp_acc[i] = vbu_ldp_acc[i] * 100
 
 plt.style.use('seaborn')
@@ -45,12 +45,13 @@ plt.plot(x, org_acc, linestyle='--', color='#9BC985',  marker='s', fillstyle='fu
 
 
 plt.plot(x, OUL, linestyle='-', color='#797BB7', marker='o', fillstyle='full', markevery=markevery,
-         label='TCU', linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+         label='TCU-S', linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
 
 
 
 
-# plt.plot(x, vbu_acc, linestyle='-.', color='#2A5522',  marker='D', fillstyle='full', markevery=markevery, label='GA',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+plt.plot(x, salun_acc, linestyle='-.', color='#B595BF',  marker='d', fillstyle='full', markevery=markevery, label='SalUn',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+
 
 
 plt.plot(x, vbu_ldp_acc, linestyle='-.', color='#E1C855',  marker='^', fillstyle='full', markevery=markevery,
@@ -61,18 +62,23 @@ plt.plot(x, vbu_ldp_acc, linestyle='-.', color='#E1C855',  marker='^', fillstyle
 leg = plt.legend(fancybox=True, shadow=True)
 # plt.xlabel('Malicious Client Ratio (%)' ,fontsize=16)
 plt.ylabel('MIA (%)' ,fontsize=24)
-my_y_ticks = np.arange(50., 76, 5)
+my_y_ticks = np.arange(50., 71, 4)
 plt.yticks(my_y_ticks,fontsize=20)
 plt.xlabel('$\it USS$' ,fontsize=20)
 
 plt.xticks(x, labels, fontsize=20)
-# plt.title('CIFAR10 IID')
+plt.title('On CIFAR10',fontsize=24)
 
 # plt.annotate(r"1e0", xy=(0.1, 1.01), xycoords='axes fraction', xytext=(-10, 10), textcoords='offset points', ha='right', va='center', fontsize=15)
 
 
 # plt.title('(c) Utility Preservation', fontsize=24)
-plt.legend(loc=(0.53, 0.31),fontsize=20)
+plt.legend(loc='best',          # same manual position
+           fontsize=20,               # same font size
+           ncol=2,
+           columnspacing=1.,         # distance between the two columns
+           handletextpad=0.8)         # gap between symbol and text
+
 plt.tight_layout()
 #plt.title("MNIST")
 plt.rcParams['figure.figsize'] = (2.0, 1)

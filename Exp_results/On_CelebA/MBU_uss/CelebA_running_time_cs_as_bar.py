@@ -4,16 +4,17 @@ import matplotlib.ticker as ticker
 
 
 # user num = 50
-labels = ['100', '120', '140', '160', '180', '200']
+labels = ['200', '400', '600', '800', '1000', '1200']
 #unl_fr = [10*10*0.22 *5, 10*10*0.22*5, 10*10*0.22 *5, 10*10*0.22*5 , 10*10*0.22*5  , 10*10*0.22*5  ]
 
 
 
-unl_vbu = [0.672, 0.808 , 0.949 , 1.077 , 1.180, 1.320]
+unl_vbu = [1.320, 2.608 , 4.049 , 5.577 , 7.180, 8.29]
 
-unl_mbu = [2.257, 2.708, 3.155, 3.611, 4.066, 4.501]
-unl_retrain = [674, 673, 675, 672, 673, 672]
+unl_mbu = [3.058, 5.908, 9.155, 12.611, 14.616, 17.501]
+unl_retrain = [1901 , 1892, 1873, 1887, 1864, 1823]
 
+salun = [3.75, 7.83, 10.53, 15.12, 18.32, 22.56]
 
 
 for i in range(len(labels)):
@@ -39,13 +40,17 @@ plt.figure()
 
 
 # F7D58B, 9CD1C8, C6B3D3, E58579
-plt.bar(x - width / 4  , unl_vbu,   width=width/4, label='VBU', color='#61DE45', edgecolor='black',  hatch='x')
+plt.bar(x - width / 5 -  width / 10, unl_vbu,   width=width/5, label='VBU', color='#61DE45', edgecolor='black',  hatch='x')
 
 # F7D58B , 6BB7CA
-plt.bar(x , unl_mbu, width=width/4, label='TCU', color='#F7D58B', edgecolor='black', hatch='*')
+plt.bar( x -  width / 10, unl_mbu , width=width/5, label='TCU-S', color='#F7D58B', edgecolor='black', hatch='*')
 
-plt.bar(x + width / 4 , unl_retrain, width=width/4, label='Retrain', color='#C6B3D3', edgecolor='black', hatch='o')
 
+plt.bar( x + width / 5 -  width / 10  , salun, width=width/5, label='SalUn', color='#C6B3D3', edgecolor='black', hatch='\\')
+
+
+
+plt.bar(x + width / 5 + width / 5 -  width / 10, unl_retrain, width=width/5, label='Retrain', color='#87B5B2', edgecolor='black', hatch='o')
 
 #plt.bar(x + width / 6 + width / 6 + width/6  , unl_mib_CelebA,   width=width/6, label='MIB CelebA', color='#E58579', edgecolor='black', hatch='\\')
 # plt.bar(x - width / 8 - width / 16, unl_vib, width=0.168, label='PriMU$_{w}$', color='cornflowerblue', hatch='*')
@@ -76,7 +81,7 @@ plt.yscale('log')
 # plt.grid(axis='y')
 # plt.legend(loc='upper left', fontsize=20)
 
-plt.legend( frameon=True, facecolor='#EAEAF2', loc='center', bbox_to_anchor=(0.52001, -0.21), ncol=3, fontsize=14.6,)
+plt.legend( frameon=True, facecolor='#EAEAF2', loc='center', bbox_to_anchor=(0.52001, -0.21), ncol=4, fontsize=14.6,)
 
 # mode="expand",  columnspacing=1.0,  borderaxespad=0., framealpha=0.5,handletextpad=0.5
 #title = 'Methods and Datasets',

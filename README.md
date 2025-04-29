@@ -1,11 +1,11 @@
-# TCU
+# TCU-S
 
 
 
-# Triplet Contrastive Unlearning for Manifold Representation-based Unlearning
+# Triplet Contrastive Unlearning with Self Mode Connectivity for Manifold Representation-based Unlearning
 
 ## Overview
-This repository is the official implementation of TCU, and the corresponding paper is under review.
+This repository is the official implementation of TCU-S, and the corresponding paper is under review.
 
 
 ## Prerequisites
@@ -29,34 +29,40 @@ Evaluated on NVIDIA Quadro RTX 6000 GPUs,
 
 ### TABLE I: Performance overview of various machine unlearning methods with MMCRs:
 
-On MNIST, USR = 1%
+On MNIST, USS = 200
 
 | On MNIST | MIA (%)      | RA (%)   |   TA (%) |  RT (second)  |
 | --------  | --------    | -------- | -------- | -------- |  
-| Retraining | 56.00      | 99.34   |  99.06  | 469.95  | 
-| GA        | 60.00      | 99.11   | 98.87   | 0.105  |  
-| VBU       | 56.99       | 99.30       | 99.05     | 0.184     | 
-| RFU       | 49.00    | 99.38    | 99.21      | 0.242      |  
-| TCU (Our)  | 55.99      | 99.40    | 99.01   | 0.161     |  
+| Retraining | 63.00      | 99.49   |  99.23  | 470.4  | 
+| GA        | 64.50      | 99.01   | 98.81   | 0.202  |  
+| VBU       | 57.00       | 99.37       | 99.15     | 0.201     | 
+| RFU       | 53.50    | 99.39    | 99.28      | 0.354      |  
+| SalUn       | 55.00    | 99.37    | 99.22      | 1.839      |  
+| TCU-S (Our)  | 61.50      | 99.57    | 99.14   | 1.483     |  
 
 In this table, we can achieve these metric values by running corresponding python files.
 
 1. To run the TCU on MNIST, we can run
 ```
-python /Manifold_unl/On_MNIST/New_version/MNIST_Normal_distribution.py
+python /Manifold_unl/On_MNIST/26Mar25/MNIST_Normal_distribution.py
 ```
 
 2. To run the TCU on CIFAR10, we can run
 ```
-python /Manifold_unl/On_CIFAR10/New_version/CIFAR10_Normal_distribution.py
+python /Manifold_unl/On_CIFAR10/26Mar2025/CIFAR10_Normal_distribution.py
 ```
 
 3. To run the TCU on CelebA, we can run
 ```
-python /Manifold_unl/On_CelebA/New_version/CELEBA_Normal_distribution_new.py
+python /Manifold_unl/On_CelebA/18Apr2025/CELEBA_Normal_distribution_new.py
 ```
 
 Note that, to sucessfully run the program on CelebA, we need first prepare the CelebA dataset, which can be downloaded from: 
 (https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFzTm8?resourcekey=0-5BR16BdXnb8hVj6CNHKzLg)
  
 
+4. To run the TCU on Tiny-ImageNet, we can run
+```
+python /Manifold_unl/On_tiny_IMAGENET/IMAGEnet_Normal_distribution_new.py
+```
+The Tiny-ImageNet dataset can be downloaded from: (https://www.kaggle.com/datasets/akash2sharma/tiny-imagenet/data)

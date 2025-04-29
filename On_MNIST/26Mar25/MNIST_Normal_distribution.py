@@ -763,7 +763,7 @@ def vib_train(dataset, model, loss_fn, reconstruction_function, args, epoch, tra
         centroids = z.mean(dim=1)  # [B, d]
 
         # We want C = [d x B], so transpose:
-        C = centroids.transpose(0,1)  # [d, B]
+        C = centroids.transpose(0, 1)  # [d, B]
 
         # Compute nuclear norm of C
         # In newer PyTorch, we can use torch.linalg.svd
@@ -1049,8 +1049,6 @@ def eva_vib(vib, dataloader_erase, args, name='test', epoch=999):
         # x = x.view(x.size(0), -1)
         # print(x.shape)
         logits_z, logits_y, x_hat, mu, logvar = vib(x, mode='with_reconstruction')  # (B, C* h* w), (B, N, 10)
-
-        x_hat = x_hat.view(x_hat.size(0), -1)
 
         x_hat = x_hat.view(x_hat.size(0), -1)
         x = x.view(x.size(0), -1)
@@ -1705,6 +1703,33 @@ def find_center_and_positive(y, class2center, class2reps):
     positive_z = torch.stack(positive_list, dim=0)
     return center_z, positive_z
 
+def linear_interpolate(model_a, model_b, alpha=0.5):
+    """
+    Returns a *new* model whose parameters are an alpha‐interpolation of
+    model_a and model_b, i.e.  param_new = (1 - alpha)*param_a + alpha*param_b.
+    """
+    new_model = copy.deepcopy(model_a)
+    with torch.no_grad():
+        for p_a, p_b, p_new in zip(model_a.parameters(),
+                                   model_b.parameters(),
+                                   new_model.parameters()):
+            p_new.data = (1.0 - alpha) * p_a.data + alpha * p_b.data
+    return new_model
+
+def connect_determined_alpha(model_a, x, positive_x, center_z_new, args):
+
+    alpha = 0
+    vib_c, lr = init_vib(args)
+    vib_c.to(args.device)
+    connected_m = linear_interpolate(model_a, vib_c)
+    with torch.no_grad():
+        logits_z, logits_y, _, mu, _ = connected_m(x, mode='with_reconstruction')
+        logits_z_p, logits_y_p, _, mu_p, _ = connected_m(positive_x, mode='with_reconstruction')
+        alpha =   F.mse_loss(logits_z, center_z_new) - F.mse_loss(logits_z_p, center_z_new)
+
+    return alpha
+
+
 
 def unlearning_with_topk(vib, unlearning_loader_with_center, top_k_nearest_loader, loss_fn, reconstruction_function, args):
     optimizer = torch.optim.Adam(vib.parameters(), lr=args.lr)
@@ -1718,17 +1743,29 @@ def unlearning_with_topk(vib, unlearning_loader_with_center, top_k_nearest_loade
             logits_z_p, logits_y_p, _, mu_p, _ = vib(positive_x, mode='with_reconstruction')
 
             H_p_q = loss_fn(logits_y_p, y)
+            alpha = connect_determined_alpha(copy.deepcopy(vib), x, positive_x, center_z_new, args)
+
             x_hat = x_hat.view(x_hat.size(0), -1)
             x = x.view(x.size(0), -1)
             BCE = reconstruction_function(x_hat, x)
-            similarity_loss_positive = 1 - F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean()
-            similarity_loss_negative = 1 - F.cosine_similarity(logits_z, center_z_new, dim=-1).mean()
-            #loss = 0.1  * (F.mse_loss(logits_z_p, center_z_new) - 1.01 * F.mse_loss(logits_z, center_z_new) )
-            loss = 0.1 * (1.001 * F.cosine_similarity(logits_z, center_z_new, dim=-1).mean() * F.cosine_similarity(
-                logits_z, center_z_new, dim=-1).mean() -
-                          F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean() * F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean() )
+
+            loss = 0.1  * (F.mse_loss(logits_z_p, center_z_new) -  F.mse_loss(logits_z, center_z_new) + alpha  + H_p_q ) #+ H_p_q # with label
+            # loss = 0.1 * (1.001 * F.cosine_similarity(logits_z, center_z_new, dim=-1).mean() * F.cosine_similarity(
+            #     logits_z, center_z_new, dim=-1).mean() -
+            #               F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean() * F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean() )
+
+            # loss = torch.clamp(loss, min=0).mean()
+
+            # similarity_loss_positive = 1 - F.cosine_similarity(logits_z_p, center_z_new, dim=-1).mean()
+            # similarity_loss_negative = 1 - F.cosine_similarity(logits_z, center_z_new, dim=-1).mean()
+            #
+            # #buffer = F.mse_loss(logits_z_p, center_z_new) - F.mse_loss(logits_z, center_z_new)
+            # buffer = similarity_loss_positive - similarity_loss_negative
+            #
+            # loss = 0.1 * (similarity_loss_positive - similarity_loss_negative - similarity_loss_negative + torch.sqrt(buffer * buffer) + H_p_q )
 
             loss = torch.clamp(loss, min=0).mean()
+
             epoch_loss += loss.item()
 
             # Backward pass
@@ -1736,7 +1773,7 @@ def unlearning_with_topk(vib, unlearning_loader_with_center, top_k_nearest_loade
             loss.backward()
             optimizer.step()
 
-        print(f"Epoch {epoch + 1}/{args.unl_epochs}, Loss: {epoch_loss:.4f}, H_p_q:{H_p_q.item()}, BCE:{BCE.item()}")
+        print(f"Epoch {epoch + 1}/{args.unl_epochs}, Loss: {epoch_loss:.4f}, H_p_q:{H_p_q.item()}, BCE:{BCE.item()}, alpha:{alpha.item()}")
 
         # for x, center_z_new, y in top_k_nearest_loader:
         #     x, center_z_new,  y = x.to(args.device), center_z_new.to(args.device), y.to(args.device)
@@ -1836,7 +1873,7 @@ args.unlearn_learning_rate = 0.1
 args.ep_distance = 20
 args.dimZ =  32 #10 /2  # 40 # 2
 args.batch_size = 16
-args.unlearning_size =1000
+args.unlearning_size = 200
 args.erased_local_r = 0.02
 args.construct_size = 0.02
 # args.auxiliary_size = 0.01
@@ -1904,6 +1941,7 @@ elif args.dataset == 'CelebA':
     data_path = '../data/CelebA'
     train_set = CelebA(data_path, split='train', target_type = 'attr', transform=train_transform, download=False)
     test_set = CelebA(data_path, split='test', target_type = 'attr', transform=train_transform, download=False)
+
 
 
 
@@ -2023,7 +2061,7 @@ print(f'unlearning with dp {running_time} seconds')
 infer_acc = membership_inf_results(infer_model, vib_unlearnined, unl_infer_data_loader, "after unl")
 
 
-vib.eval()
+vib_unlearnined.eval()
 acc_t = eva_vib(vib_unlearnined, test_loader, args, name='on test dataset after unlearning', epoch=999)
 acc_r = eva_vib(vib_unlearnined, original_train_loader, args, name='on the remaining training after unlearning', epoch=999)
 acc_ua = eva_vib(vib_unlearnined, unlearning_loader, args, name='on the unlearning data after unlearning', epoch=999)
@@ -2032,19 +2070,4 @@ print("acc_ua:", 1 - acc_ua)
 
 
 
-
-
-# for retraining
-
-# Create Subset datasets
-unlearning_dataset = Subset(train_set, unlearning_indices)
-remaining_dataset = Subset(train_set, remaining_indices)
-
-unlearning_dataset = TransformSubset(train_set, unlearning_indices, transform=trans_mnist)
-
-labeled_unlearn_set = CustomLabelDataset(unlearning_dataset, 0)  # we set label to 0 as the unlearned should not in the training set
-
-
-unl_infer_data_loader = DataLoader(labeled_unlearn_set, batch_size=args.batch_size, shuffle=True)
-# calculate after unlearning
 

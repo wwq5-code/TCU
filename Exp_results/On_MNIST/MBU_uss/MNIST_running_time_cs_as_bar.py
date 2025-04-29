@@ -4,16 +4,16 @@ import matplotlib.ticker as ticker
 
 
 # user num = 50
-labels = ['100', '120', '140', '160', '180', '200']
+labels = ['200', '400', '600', '800', '1000', '1200']
 #unl_fr = [10*10*0.22 *5, 10*10*0.22*5, 10*10*0.22 *5, 10*10*0.22*5 , 10*10*0.22*5  , 10*10*0.22*5  ]
 
 
 
-unl_vbu = [0.102, 0.119 , 0.140 , 0.171 , 0.180, 0.201]
+unl_vbu = [0.201, 0.401 , 0.621 , 0.813 , 1.0080, 1.2201]
 
-unl_mbu = [0.158, 0.187, 0.221, 0.248, 0.280, 0.312]
+unl_mbu = [1.48, 3.104, 4.65, 6.782, 7.5682, 9.732]
 unl_retrain = [470, 469, 468, 471, 468, 469]
-
+salun = [1.83, 3.86, 5.33, 7.782, 8.3682, 11.0432]
 
 
 for i in range(len(labels)):
@@ -21,6 +21,7 @@ for i in range(len(labels)):
     unl_retrain[i] = unl_retrain[i]
     unl_mbu[i] = unl_mbu[i]
     unl_vbu[i] = unl_vbu[i]
+    salun[i] = salun[i]
 
 
 x = np.arange(len(labels))  # the label locations
@@ -39,12 +40,17 @@ plt.figure()
 
 
 # F7D58B, 9CD1C8, C6B3D3, E58579
-plt.bar(x - width / 4  , unl_vbu,   width=width/4, label='VBU', color='#61DE45', edgecolor='black',  hatch='x')
+plt.bar(x - width / 5 -  width / 10, unl_vbu,   width=width/5, label='VBU', color='#61DE45', edgecolor='black',  hatch='x')
 
 # F7D58B , 6BB7CA
-plt.bar(x , unl_mbu, width=width/4, label='TCU', color='#F7D58B', edgecolor='black', hatch='*')
+plt.bar( x -  width / 10, unl_mbu , width=width/5, label='TCU-S', color='#F7D58B', edgecolor='black', hatch='*')
 
-plt.bar(x + width / 4 , unl_retrain, width=width/4, label='Retrain', color='#C6B3D3', edgecolor='black', hatch='o')
+
+plt.bar( x + width / 5 -  width / 10  , salun, width=width/5, label='SalUn', color='#C6B3D3', edgecolor='black', hatch='\\')
+
+
+
+plt.bar(x + width / 5 + width / 5 -  width / 10, unl_retrain, width=width/5, label='Retrain', color='#87B5B2', edgecolor='black', hatch='o')
 
 
 #plt.bar(x + width / 6 + width / 6 + width/6  , unl_mib_CelebA,   width=width/6, label='MIB CelebA', color='#E58579', edgecolor='black', hatch='\\')
@@ -64,9 +70,10 @@ plt.ylabel('Running Time (s)', fontsize=20)
 plt.xticks(x, labels, fontsize=20)
 # ax.set_xticklabels(labels,fontsize=15)
 
-my_y_ticks = np.arange(0, 2000, 400)
+my_y_ticks = np.arange(0, 503, 100)
 # Make y-axis a log scale:
 plt.yscale('log')
+plt.yticks(fontsize=20)
 # plt.gca().yaxis.set_major_formatter(ticker.ScalarFormatter())
 # plt.gca().yaxis.get_major_formatter().set_scientific(True)
 # plt.gca().yaxis.get_major_formatter().set_useOffset(False)
@@ -76,7 +83,7 @@ plt.yscale('log')
 # plt.grid(axis='y')
 # plt.legend(loc='upper left', fontsize=20)
 
-plt.legend( frameon=True, facecolor='#EAEAF2', loc='center', bbox_to_anchor=(0.52001, -0.21), ncol=3, fontsize=14.6,)
+plt.legend( frameon=True, facecolor='#EAEAF2', loc='center', bbox_to_anchor=(0.52001, -0.21), ncol=4, fontsize=14.6,)
 
 # mode="expand",  columnspacing=1.0,  borderaxespad=0., framealpha=0.5,handletextpad=0.5
 #title = 'Methods and Datasets',

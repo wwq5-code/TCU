@@ -860,8 +860,8 @@ def prepare_unl(erasing_dataset, dataloader_remaining_after_aux, model, loss_fn,
             self_s_rate = 1 - unl_rate
 
 
-            loss =  (args.beta * KLD_mean - H_p_q * args.vbu_r)*args.vbu_r
-            # loss = args.beta * KLD_mean - args.unlearn_learning_rate * H_p_q + args.self_sharing_rate * (args.beta * KLD_mean2 + H_p_q2)  # args.beta * KLD_mean - H_p_q + args.beta * KLD_mean2  + H_p_q2 #- log_z / e_log_py #-   # H_p_q + args.beta * KLD_mean2
+            # loss =  (args.beta * KLD_mean - H_p_q * args.vbu_r)*args.vbu_r
+            loss = args.beta * KLD_mean - args.unlearn_learning_rate * H_p_q + args.self_sharing_rate * (args.beta * KLD_mean2 + H_p_q2)  # args.beta * KLD_mean - H_p_q + args.beta * KLD_mean2  + H_p_q2 #- log_z / e_log_py #-   # H_p_q + args.beta * KLD_mean2
 
             # loss = (args.beta * KLD_mean - args.unlearn_learning_rate * H_p_q) * unl_rate + self_s_rate * (args.beta * KLD_mean2 + H_p_q2)
 
@@ -1516,7 +1516,7 @@ args.unlearn_learning_rate = 0.0001
 args.ep_distance = 20
 args.dimZ =  32 #10 /2  # 40 # 2
 args.batch_size = 16
-args.unlearning_size =100
+args.unlearning_size =1000
 args.erased_local_r = 0.02
 args.construct_size = 0.02
 # args.auxiliary_size = 0.01

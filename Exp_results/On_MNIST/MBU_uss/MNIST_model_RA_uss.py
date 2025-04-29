@@ -12,22 +12,22 @@ x=[1, 2, 3, 4, 5, 6]
 # attack_for_plt=[0, 0.3524, 0, 0.1762, 0.1762]
 # basic_for_plt=[99.8, 99.8, 99.8, 99.8, 99.8]
 
-labels = ['100', '120', '140', '160', '180', '200']
+labels = ['200', '400', '600', '800', '1000', '1200']
 # unl_org = [97.77, 97.55, 97.35, 97.29, 97.21, 97.21]
 
 # unl_hess_r = [96.6, 96.66, 96.04, 95.94, 95.85, 97.21]
-OUL = [0.9955, 0.9954, 0.99545, 0.9953, 0.9952, 0.9951]
+OUL = [0.9958, 0.9948, 0.9947, 0.9943, 0.9941, 0.9940]
 
-org_acc = [0.9961, 0.99612, 0.99611, 0.99613, 0.99614, 0.99611]
+org_acc = [0.9965, 0.9965, 0.9965, 0.9965, 0.9965, 0.9965]
 
-vbu_acc = [0.9442, 0.9445,  0.9401, 0.9411, 0.9472, 0.9467]
+salun_acc = [0.9937, 0.9938,  0.9941, 0.9934, 0.9938, 0.9935]
 # unl_ss_wo = [94.32, 94.53, 94.78, 93.38, 94.04, 97.21]
 vbu_ldp_acc = [0.9937, 0.9933, 0.9930, 0.9929, 0.9924, 0.9922]
 
 for i in range(len(OUL)):
     OUL[i] = OUL[i]*100
     org_acc[i] = org_acc[i]*100
-    vbu_acc[i] = vbu_acc[i]*100
+    salun_acc[i] = salun_acc[i]*100
     vbu_ldp_acc[i] = vbu_ldp_acc[i] * 100
 
 plt.style.use('seaborn')
@@ -44,12 +44,11 @@ plt.plot(x, org_acc, linestyle='--', color='#9BC985',  marker='s', fillstyle='fu
 
 
 plt.plot(x, OUL, linestyle='-', color='#797BB7', marker='o', fillstyle='full', markevery=markevery,
-         label='TCU', linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+         label='TCU-S', linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
 
 
 
-
-#plt.plot(x, vbu_acc, linestyle='-.', color='#2A5522',  marker='D', fillstyle='full', markevery=markevery, label='GA',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
+plt.plot(x, salun_acc, linestyle='-.', color='#B595BF',  marker='d', fillstyle='full', markevery=markevery, label='SalUn',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
 
 plt.plot(x, vbu_ldp_acc, linestyle='-.', color='#E1C855',  marker='^', fillstyle='full', markevery=markevery,
          label='VBU',linewidth=l_w, markersize=m_s, markeredgewidth=marker_s)
@@ -70,7 +69,7 @@ plt.xticks(x, labels, fontsize=20)
 
 
 # plt.title('(c) Utility Preservation', fontsize=24)
-plt.legend(loc=(0.53, 0.01),fontsize=20)
+plt.legend(loc=(0.03, 0.01),fontsize=20)
 plt.tight_layout()
 #plt.title("MNIST")
 plt.rcParams['figure.figsize'] = (2.0, 1)
